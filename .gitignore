@@ -1,0 +1,22 @@
+node_modules
+out
+dist
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env
+.env
+.env.*
+
+# OS/Editor
+.vscode
+Thumbs.db
+
+# Ensure planning doc is tracked
+!plan.md
