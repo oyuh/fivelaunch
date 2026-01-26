@@ -31,7 +31,8 @@ const api = {
     ipcRenderer.invoke('import-gta-settings-from-documents', id),
   importGtaSettingsFromTemplate: (id: string) =>
     ipcRenderer.invoke('import-gta-settings-from-template', id),
-  getClientStats: (id: string) => ipcRenderer.invoke('get-client-stats', id)
+  getClientStats: (id: string) => ipcRenderer.invoke('get-client-stats', id),
+  createClientShortcut: (id: string) => ipcRenderer.invoke('create-client-shortcut', id)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

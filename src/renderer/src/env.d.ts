@@ -24,6 +24,7 @@ interface IAPI {
   importGtaSettingsFromDocuments: (id: string) => Promise<GtaSettingsDocument>
   importGtaSettingsFromTemplate: (id: string) => Promise<GtaSettingsDocument>
   getClientStats: (id: string) => Promise<ClientStats>
+  createClientShortcut: (id: string) => Promise<{ success: boolean; path: string }>
 }
 
 declare global {

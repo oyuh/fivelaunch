@@ -39,6 +39,7 @@ function App(): JSX.Element {
   const [clientStatsLoading, setClientStatsLoading] = useState(false)
   const [launchStatus, setLaunchStatus] = useState<string | null>(null)
   const [isLaunching, setIsLaunching] = useState(false)
+  const [launchStatusUpdatedAt, setLaunchStatusUpdatedAt] = useState<number>(0)
   const selectedClientData = clients.find((c) => c.id === selectedClient) || null
 
   useEffect(() => {
@@ -86,6 +87,7 @@ function App(): JSX.Element {
     if (!window.api) return
     const unsubscribe = window.api.onLaunchStatus((status: string) => {
       setLaunchStatus(status)
+      setLaunchStatusUpdatedAt(Date.now())
       if (status === 'Launched!') {
         setTimeout(() => {
           setLaunchStatus(null)
@@ -95,6 +97,131 @@ function App(): JSX.Element {
     })
     return () => unsubscribe()
   }, [])
+
+  // Watchdog: never leave the UI in a "launching" state indefinitely.
+  useEffect(() => {
+    if (!isLaunching) return
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      // Clear after 60s without reaching "Launched!".
+      // This is UI-only; the actual launch may still succeed.
+      if (Date.now() - startedAt > 60_000) {
+        setIsLaunching(false)
+        setLaunchStatus((prev) => prev ?? 'Launch taking longer than expected')
+        window.clearInterval(timer)
+        return
+      }
+
+      // If status hasn't updated in a while, show a friendly hint.
+      if (launchStatusUpdatedAt && Date.now() - launchStatusUpdatedAt > 15_000) {
+        setLaunchStatus('Launching... (still working)')
+      }
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [isLaunching, launchStatusUpdatedAt])
+
+  const renderLaunchProgress = () => {
+    if (!launchStatus) return null
+
+    const isError = launchStatus.startsWith('Error:')
+
+    const steps = [
+      { key: 'prepare', label: 'Prepare', match: /Preparing/i },
+      { key: 'link', label: 'Link', match: /Linking/i },
+      { key: 'settings', label: 'Settings', match: /(Applying GTA settings|GTA Settings|Finalizing settings)/i },
+      { key: 'start', label: 'Start', match: /Starting FiveM/i },
+      { key: 'done', label: 'Done', match: /Launched!/i }
+    ]
+
+    const currentIndex = isError
+      ? -1
+      : Math.max(
+          0,
+          steps.findIndex((s) => s.match.test(launchStatus))
+        )
+
+    const isDone = launchStatus === 'Launched!'
+
+    return (
+      <div className="mt-2 w-full max-w-xl rounded-lg border border-border bg-card/60 px-3 py-2 backdrop-blur">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              {isLaunching && !isDone && !isError && (
+                <div className="flex items-center gap-1">
+                  {steps.slice(0, 5).map((step, idx) => {
+                    const completed = idx < currentIndex
+                    const active = idx === currentIndex
+                    const base = 'h-2.5 w-2.5 rounded-full transition-colors'
+
+                    if (isDone) {
+                      return (
+                        <div
+                          key={step.key}
+                          className={`${base} bg-emerald-500/90`}
+                          title={step.label}
+                        />
+                      )
+                    }
+
+                    if (completed) {
+                      return (
+                        <div
+                          key={step.key}
+                          className={`${base} bg-primary/80`}
+                          title={step.label}
+                        />
+                      )
+                    }
+
+                    if (active) {
+                      return (
+                        <div
+                          key={step.key}
+                          className={`${base} bg-primary animate-pulse`}
+                          title={step.label}
+                        />
+                      )
+                    }
+
+                    return (
+                      <div
+                        key={step.key}
+                        className={`${base} bg-muted`}
+                        title={step.label}
+                      />
+                    )
+                  })}
+                </div>
+              )}
+
+              {isError && (
+                <div className="h-2.5 w-2.5 rounded-full bg-destructive" />
+              )}
+              {isDone && (
+                <div className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              )}
+
+              <div className="truncate text-sm text-foreground">{launchStatus}</div>
+            </div>
+          </div>
+
+          {!isLaunching && (
+            <button
+              type="button"
+              onClick={() => setLaunchStatus(null)}
+              className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Dismiss status"
+              title="Dismiss"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const loadClients = async () => {
     const data = await window.api.getClients()
@@ -145,6 +272,20 @@ function App(): JSX.Element {
   const handleOpenFolder = async () => {
     if (!selectedClient) return
     await window.api.openClientFolder(selectedClient)
+  }
+
+  const handleCreateShortcut = async () => {
+    if (!selectedClient) return
+    try {
+      const result = await window.api.createClientShortcut(selectedClient)
+      if (result?.success) {
+        setLaunchStatus(`Shortcut created: ${result.path}`)
+        setTimeout(() => setLaunchStatus(null), 3000)
+      }
+    } catch (error) {
+      setLaunchStatus(`Error: ${(error as Error).message}`)
+      setTimeout(() => setLaunchStatus(null), 3000)
+    }
   }
 
   const handleBrowseGamePath = async () => {
@@ -706,6 +847,13 @@ function App(): JSX.Element {
                             Open Client Folder
                           </Button>
                           <Button
+                            variant="secondary"
+                            disabled={!selectedClientData}
+                            onClick={handleCreateShortcut}
+                          >
+                            Create Desktop Shortcut
+                          </Button>
+                          <Button
                             variant="destructive"
                             disabled={!selectedClientData}
                             onClick={(e: React.MouseEvent<HTMLButtonElement>) =>
@@ -823,14 +971,7 @@ function App(): JSX.Element {
                   <Button disabled={!selectedClientData || isLaunching} onClick={handleLaunch}>
                     Launch Game
                   </Button>
-                  {launchStatus && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      {isLaunching && launchStatus !== 'Launched!' && (
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                      )}
-                      <span>{launchStatus}</span>
-                    </div>
-                  )}
+                  {renderLaunchProgress()}
                 </div>
               </CardContent>
             </Card>

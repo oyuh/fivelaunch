@@ -400,15 +400,12 @@ export const GTA_SETTINGS_MAP: Record<string, SettingDefinition> = {
     type: 'select',
     options: [
       { value: '0', label: 'Auto' },
-      { value: '1', label: '16:9' },
+      { value: '1', label: '3:2' },
       { value: '2', label: '4:3' },
-      { value: '3', label: '5:4' },
-      { value: '4', label: '16:10' },
-      { value: '5', label: '1.85:1' },
-      { value: '6', label: '2.35:1' },
-      { value: '7', label: '2.39:1' },
-      { value: '8', label: '1:1' },
-      { value: '9', label: '21:9' }
+      { value: '3', label: '5:3' },
+      { value: '4', label: '5:4' },
+      { value: '5', label: '16:9' },
+      { value: '6', label: '16:10' }
     ],
     category: 'Display'
   },

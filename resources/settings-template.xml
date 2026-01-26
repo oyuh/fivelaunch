@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Settings>
+  <configSource>SMC_USER</configSource>
   <version value="27"></version>
   <graphics>
     <Tessellation value="1"></Tessellation>
@@ -65,6 +66,6 @@
     <Convergence value="0.100000"></Convergence>
     <Separation value="1.000000"></Separation>
     <PauseOnFocusLoss value="1"></PauseOnFocusLoss>
-    <AspectRatio value="1"></AspectRatio>
+    <AspectRatio value="5"></AspectRatio>
   </video>
 </Settings>

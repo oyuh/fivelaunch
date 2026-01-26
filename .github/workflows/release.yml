@@ -37,9 +37,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm build:win
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          pnpm build:win:portable
+          pnpm build:win
+
+      - name: Zip Windows dist
+        run: node scripts/zip-dist.js
 
       - name: Publish release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/FiveLaunch.exe
+          files: |
+            dist/FiveLaunch-Portable.exe
+            dist/FiveLaunch-windows.zip

@@ -5,21 +5,36 @@ import {
   getFiveMPath,
   getFiveMExecutable,
   getClientsDataPath,
-  getGtaSettingsPath
+  getGtaSettingsPath,
+  getFiveMAppSettingsPath
 } from '../utils/paths'
 import type { LinkOptions } from '../types'
 
 export class GameManager {
+
+  private looksLikeGtaSettingsXml(filePath: string): boolean {
+    try {
+      if (!fs.existsSync(filePath)) return false
+      const stat = fs.statSync(filePath)
+      if (!stat.isFile() || stat.size < 32) return false
+      const head = fs.readFileSync(filePath, 'utf8').slice(0, 2048)
+      return head.includes('<Settings')
+    } catch {
+      return false
+    }
+  }
 
   private ensureClientGtaSettingsFile(clientPath: string): string {
     const settingsDir = path.join(clientPath, 'settings')
     const targetPath = path.join(settingsDir, 'gta5_settings.xml')
     const legacyPath = path.join(settingsDir, 'settings.xml')
 
-    if (fs.existsSync(targetPath)) return targetPath
+    // If the file exists but is an empty placeholder, treat it as missing.
+    // (New clients used to be created with an empty settings.xml, which would get migrated and cause GTA/FiveM to regenerate defaults.)
+    if (this.looksLikeGtaSettingsXml(targetPath)) return targetPath
 
     // Migrate legacy filename if it exists
-    if (fs.existsSync(legacyPath)) {
+    if (this.looksLikeGtaSettingsXml(legacyPath)) {
       fs.mkdirSync(settingsDir, { recursive: true })
       fs.copyFileSync(legacyPath, targetPath)
       return targetPath
@@ -38,7 +53,7 @@ export class GameManager {
       return targetPath
     }
 
-    // Minimal fallback so user can launch/edit immediately even without a template
+    // small fallback so user can launch/edit immediately even without a template
     const minimal = `<?xml version="1.0" encoding="UTF-8"?>\n<Settings>\n  <configSource>SMC_USER</configSource>\n</Settings>\n`
     fs.writeFileSync(targetPath, minimal, 'utf8')
     return targetPath
@@ -64,7 +79,7 @@ export class GameManager {
   private startGtaSettingsEnforcement(
     source: string,
     targets: string[],
-    statusCallback?: (status: string) => void
+    _statusCallback?: (status: string) => void
   ): void {
     let desired: Buffer
     try {
@@ -79,7 +94,8 @@ export class GameManager {
     const startedAt = Date.now()
     const durationMs = 180_000
     const intervalMs = 750
-    statusCallback?.('Finalizing settings (enforcing)...')
+    // NOTE: Do not send long-running "finalizing" statuses to the UI.
+    // Enforcement can run for minutes and would overwrite the "Launched!" status.
 
     const writes: Record<string, number> = {}
 
@@ -87,7 +103,6 @@ export class GameManager {
       const now = Date.now()
       if (now - startedAt > durationMs) {
         clearInterval(interval)
-        statusCallback?.('Finalizing settings...')
         return
       }
 
@@ -185,19 +200,20 @@ export class GameManager {
         const source = this.ensureClientGtaSettingsFile(clientPath)
         console.log('GTA Settings - Source:', source, 'exists:', fs.existsSync(source))
 
-          // CRITICAL: Delete FiveM's profile data that OVERRIDES settings.xml!
-
+          // NOTE: Temporarily disabled per request (testing whether KVS affects settings persistence).
+          // CRITICAL: FiveM's profile data can OVERRIDE settings.xml.
+          //
           // 1. Delete KVS cache (profile key-value store)
-          const kvsPath = path.join(process.env.APPDATA || '', 'CitizenFX', 'kvs')
-          if (fs.existsSync(kvsPath)) {
-            try {
-              console.log('Clearing FiveM profile cache (KVS)...')
-              fs.rmSync(kvsPath, { recursive: true, force: true })
-              console.log('KVS cache cleared')
-            } catch (err) {
-              console.warn('Could not clear KVS cache:', err)
-            }
-          }
+          // const kvsPath = path.join(process.env.APPDATA || '', 'CitizenFX', 'kvs')
+          // if (fs.existsSync(kvsPath)) {
+          //   try {
+          //     console.log('Clearing FiveM profile cache (KVS)...')
+          //     fs.rmSync(kvsPath, { recursive: true, force: true })
+          //     console.log('KVS cache cleared')
+          //   } catch (err) {
+          //     console.warn('Could not clear KVS cache:', err)
+          //   }
+          // }
 
           // 2. Backup/remove fivem_sdk.cfg (contains profile console variables that override XML)
           const sdkCfgPath = path.join(process.env.APPDATA || '', 'CitizenFX', 'fivem_sdk.cfg')
@@ -217,6 +233,10 @@ export class GameManager {
         // CitizenFX Roaming (PRIMARY)
         const citizenFxTarget = getGtaSettingsPath()
         if (citizenFxTarget) targets.push(citizenFxTarget)
+
+        // FiveM.app settings.xml (some installs/flows still read/override from here)
+        const fiveMAppSettings = getFiveMAppSettingsPath()
+        if (fiveMAppSettings) targets.push(fiveMAppSettings)
 
         // CitizenFX LocalAppData (some installs use this)
         if (process.env.LOCALAPPDATA) targets.push(path.join(process.env.LOCALAPPDATA, 'CitizenFX', 'gta5_settings.xml'))
@@ -238,6 +258,7 @@ export class GameManager {
         const source = this.ensureClientGtaSettingsFile(clientPath)
         const targets: string[] = [
           getGtaSettingsPath() || '',
+          getFiveMAppSettingsPath() || '',
           process.env.LOCALAPPDATA
             ? path.join(process.env.LOCALAPPDATA, 'CitizenFX', 'gta5_settings.xml')
             : ''
