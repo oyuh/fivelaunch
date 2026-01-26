@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { ClientProfile, LinkOptions } from './types'
+import type { ClientProfile, LinkOptions, GtaSettingsDocument, ClientStats } from './types'
 
 interface IAPI {
   getClients: () => Promise<ClientProfile[]>
@@ -11,10 +11,19 @@ interface IAPI {
   openCitizenFxFolder: () => Promise<string>
   openFiveMFolder: () => Promise<string>
   updateClientLinks: (id: string, linkOptions: LinkOptions) => Promise<void>
-  launchClient: (id: string) => void
+  launchClient: (id: string) => Promise<{ success: boolean; error?: string }>
+  onLaunchStatus: (callback: (status: string) => void) => () => void
   windowMinimize: () => Promise<void>
   windowToggleMaximize: () => Promise<void>
   windowClose: () => Promise<void>
+  getSettings: () => Promise<{ gamePath?: string }>
+  setGamePath: (gamePath: string) => Promise<void>
+  browseGamePath: () => Promise<string | null>
+  getClientGtaSettings: (id: string) => Promise<GtaSettingsDocument>
+  saveClientGtaSettings: (id: string, doc: GtaSettingsDocument) => Promise<void>
+  importGtaSettingsFromDocuments: (id: string) => Promise<GtaSettingsDocument>
+  importGtaSettingsFromTemplate: (id: string) => Promise<GtaSettingsDocument>
+  getClientStats: (id: string) => Promise<ClientStats>
 }
 
 declare global {

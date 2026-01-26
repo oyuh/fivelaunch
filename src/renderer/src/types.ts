@@ -13,3 +13,19 @@ export interface LinkOptions {
   gtaSettings: boolean
   citizenFxIni: boolean
 }
+
+export interface GtaSettingsItem {
+  id: string
+  path: string
+  attributes: Record<string, string>
+}
+
+export interface GtaSettingsDocument {
+  rootName: string
+  items: Array<Omit<GtaSettingsItem, 'id'>>
+}
+
+export interface ClientStats {
+  fileCount: number
+  totalBytes: number
+}

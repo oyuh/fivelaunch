@@ -83,7 +83,7 @@ export class ClientManager {
     // Settings folder + placeholder files
     const settingsPath = path.join(clientPath, 'settings')
     fs.mkdirSync(settingsPath, { recursive: true })
-    const gtaSettingsPath = path.join(settingsPath, 'gta5_settings.xml')
+    const gtaSettingsPath = path.join(settingsPath, 'settings.xml')
     const citizenFxIniPath = path.join(settingsPath, 'CitizenFX.ini')
     if (!fs.existsSync(gtaSettingsPath)) fs.writeFileSync(gtaSettingsPath, '')
     if (!fs.existsSync(citizenFxIniPath)) fs.writeFileSync(citizenFxIniPath, '')
@@ -123,5 +123,37 @@ export class ClientManager {
     if (!client) return
     client.linkOptions = linkOptions
     this.saveConfig(config)
+  }
+
+  public getClientStats(id: string): { fileCount: number; totalBytes: number } {
+    const clientPath = this.getClientFolderPath(id)
+    if (!clientPath) return { fileCount: 0, totalBytes: 0 }
+    return this.getFolderStats(clientPath)
+  }
+
+  private getFolderStats(folderPath: string): { fileCount: number; totalBytes: number } {
+    let fileCount = 0
+    let totalBytes = 0
+
+    const entries = fs.readdirSync(folderPath, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = path.join(folderPath, entry.name)
+      const stats = fs.lstatSync(fullPath)
+
+      if (stats.isSymbolicLink()) {
+        continue
+      }
+
+      if (stats.isDirectory()) {
+        const nested = this.getFolderStats(fullPath)
+        fileCount += nested.fileCount
+        totalBytes += nested.totalBytes
+      } else if (stats.isFile()) {
+        fileCount += 1
+        totalBytes += stats.size
+      }
+    }
+
+    return { fileCount, totalBytes }
   }
 }

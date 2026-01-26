@@ -127,15 +127,6 @@ Each client has its own storage:
 
 ---
 
-## 🧾 GitHub Commit Info in Builds
-
-Release builds show the most recent commit hash and date in the footer. This is fetched at **build time** from:
-- https://api.github.com/repos/oyuh/fivelaunch/commits?per_page=1
-
-If the API is unavailable, it falls back to local git metadata.
-
----
-
 ## 🤝 Contributing
 
 Pull requests are welcome.

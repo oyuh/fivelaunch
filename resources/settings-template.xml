@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Settings>
+  <version value="27"></version>
+  <graphics>
+    <Tessellation value="1"></Tessellation>
+    <LodScale value="0.5"></LodScale>
+    <PedLodBias value="0.200000"></PedLodBias>
+    <VehicleLodBias value="0.000000"></VehicleLodBias>
+    <ShadowQuality value="0"></ShadowQuality>
+    <ReflectionQuality value="0"></ReflectionQuality>
+    <ReflectionMSAA value="2"></ReflectionMSAA>
+    <SSAO value="0"></SSAO>
+    <AnisotropicFiltering value="0"></AnisotropicFiltering>
+    <MSAA value="0"></MSAA>
+    <MSAAFragments value="0"></MSAAFragments>
+    <MSAAQuality value="0"></MSAAQuality>
+    <SamplingMode value="0"></SamplingMode>
+    <TextureQuality value="0"></TextureQuality>
+    <ParticleQuality value="0"></ParticleQuality>
+    <WaterQuality value="0"></WaterQuality>
+    <GrassQuality value="0"></GrassQuality>
+    <ShaderQuality value="0"></ShaderQuality>
+    <Shadow_SoftShadows value="5"></Shadow_SoftShadows>
+    <UltraShadows_Enabled value="false"></UltraShadows_Enabled>
+    <Shadow_ParticleShadows value="false"></Shadow_ParticleShadows>
+    <Shadow_Distance value="2.000000"></Shadow_Distance>
+    <Shadow_LongShadows value="false"></Shadow_LongShadows>
+    <Shadow_SplitZStart value="0.930000"></Shadow_SplitZStart>
+    <Shadow_SplitZEnd value="0.890000"></Shadow_SplitZEnd>
+    <Shadow_aircraftExpWeight value="0.990000"></Shadow_aircraftExpWeight>
+    <Shadow_DisableScreenSizeCheck value="false"></Shadow_DisableScreenSizeCheck>
+    <Reflection_MipBlur value="false"></Reflection_MipBlur>
+    <FXAA_Enabled value="false"></FXAA_Enabled>
+    <TXAA_Enabled value="false"></TXAA_Enabled>
+    <Lighting_FogVolumes value="false"></Lighting_FogVolumes>
+    <Shader_SSA value="false"></Shader_SSA>
+    <DX_Version value="2"></DX_Version>
+    <CityDensity value="1.000000"></CityDensity>
+    <PedVarietyMultiplier value="1.000000"></PedVarietyMultiplier>
+    <VehicleVarietyMultiplier value="1.000000"></VehicleVarietyMultiplier>
+    <PostFX value="0"></PostFX>
+    <DoF value="false"></DoF>
+    <HdStreamingInFlight value="false"></HdStreamingInFlight>
+    <MaxLodScale value="1.000000"></MaxLodScale>
+    <MotionBlurStrength value="0.000000"></MotionBlurStrength>
+  </graphics>
+  <system>
+    <numBytesPerReplayBlock value="9000000"></numBytesPerReplayBlock>
+    <numReplayBlocks value="30"></numReplayBlocks>
+    <maxSizeOfStreamingReplay value="1024"></maxSizeOfStreamingReplay>
+    <maxFileStoreSize value="65536"></maxFileStoreSize>
+  </system>
+  <audio>
+    <Audio3d value="false"></Audio3d>
+  </audio>
+  <video>
+    <AdapterIndex value="0"></AdapterIndex>
+    <OutputIndex value="0"></OutputIndex>
+    <ScreenWidth value="2560"></ScreenWidth>
+    <ScreenHeight value="1440"></ScreenHeight>
+    <RefreshRate value="239"></RefreshRate>
+    <Windowed value="2"></Windowed>
+    <VSync value="0"></VSync>
+    <Stereo value="false"></Stereo>
+    <Convergence value="0.100000"></Convergence>
+    <Separation value="1.000000"></Separation>
+    <PauseOnFocusLoss value="1"></PauseOnFocusLoss>
+    <AspectRatio value="1"></AspectRatio>
+  </video>
+</Settings>

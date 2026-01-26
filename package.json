@@ -16,9 +16,12 @@
     "build": "pnpm typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm build && electron-builder --dir",
-    "build:win": "pnpm build && electron-builder --win",
+    "build:win": "pnpm build && electron-builder --win portable",
     "build:mac": "pnpm build && electron-builder --mac",
-    "build:linux": "pnpm build && electron-builder --linux"
+    "build:linux": "pnpm build && electron-builder --linux",
+    "tag:latest": "git fetch --tags && git describe --tags --abbrev=0",
+    "tag:next": "node -e \"const cp=require('child_process');let t='v0.0.0';try{t=cp.execSync('git describe --tags --abbrev=0').toString().trim()}catch{};const m=t.match(/v(\\d+)\\.(\\d+)\\.(\\d+)/);if(!m){console.log('Latest tag:',t);process.exit(0)};const [maj,min,pat]=m.slice(1).map(Number);const next=`v${maj}.${min}.${pat+1}`;console.log('Latest tag:',t);console.log('Suggested next tag:',next);console.log('Run: git tag '+next+' && git push origin '+next);\"",
+    "tag:cli": "node scripts/tag-release.js"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -26,6 +29,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "electron-updater": "^6.1.7",
+    "fast-xml-parser": "^5.3.3",
     "lucide-react": "^0.469.0",
     "tailwind-merge": "^2.5.4"
   },
@@ -79,6 +83,7 @@
     ],
     "win": {
       "icon": "resources/Logo-Full.ico",
+      "artifactName": "FiveLaunch.exe",
       "target": [
         "portable"
       ]
@@ -92,10 +97,6 @@
         "AppImage",
         "deb"
       ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
     }
   }
 }

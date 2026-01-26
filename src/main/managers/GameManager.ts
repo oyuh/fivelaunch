@@ -1,18 +1,132 @@
 import fs from 'fs'
 import path from 'path'
-import { spawn } from 'child_process'
+import { spawn, execSync } from 'child_process'
 import {
   getFiveMPath,
   getFiveMExecutable,
   getClientsDataPath,
-  getGtaSettingsPath,
-  getCitizenFxIniPath
+  getGtaSettingsPath
 } from '../utils/paths'
 import type { LinkOptions } from '../types'
 
 export class GameManager {
 
-  public async launchClient(clientId: string, linkOptions: LinkOptions): Promise<boolean> {
+  private ensureClientGtaSettingsFile(clientPath: string): string {
+    const settingsDir = path.join(clientPath, 'settings')
+    const targetPath = path.join(settingsDir, 'gta5_settings.xml')
+    const legacyPath = path.join(settingsDir, 'settings.xml')
+
+    if (fs.existsSync(targetPath)) return targetPath
+
+    // Migrate legacy filename if it exists
+    if (fs.existsSync(legacyPath)) {
+      fs.mkdirSync(settingsDir, { recursive: true })
+      fs.copyFileSync(legacyPath, targetPath)
+      return targetPath
+    }
+
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+
+    const templateCandidates = [
+      path.join(process.cwd(), 'resources', 'settings-template.xml'),
+      path.join(__dirname, '../../resources/settings-template.xml')
+    ]
+
+    const templatePath = templateCandidates.find((p) => fs.existsSync(p))
+    if (templatePath) {
+      fs.copyFileSync(templatePath, targetPath)
+      return targetPath
+    }
+
+    // Minimal fallback so user can launch/edit immediately even without a template
+    const minimal = `<?xml version="1.0" encoding="UTF-8"?>\n<Settings>\n  <configSource>SMC_USER</configSource>\n</Settings>\n`
+    fs.writeFileSync(targetPath, minimal, 'utf8')
+    return targetPath
+  }
+
+  private copyFileBestEffort(source: string, target: string): void {
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(source, target)
+
+      try {
+        const fd = fs.openSync(target, 'r+')
+        fs.fsyncSync(fd)
+        fs.closeSync(fd)
+      } catch {
+        // ignore
+      }
+    } catch {
+      // ignore - target can be locked while GTA/FiveM writes it
+    }
+  }
+
+  private startGtaSettingsEnforcement(
+    source: string,
+    targets: string[],
+    statusCallback?: (status: string) => void
+  ): void {
+    let desired: Buffer
+    try {
+      desired = fs.readFileSync(source)
+    } catch {
+      return
+    }
+
+    const uniqueTargets = Array.from(new Set(targets.filter(Boolean)))
+    if (uniqueTargets.length === 0) return
+
+    const startedAt = Date.now()
+    const durationMs = 180_000
+    const intervalMs = 750
+    statusCallback?.('Finalizing settings (enforcing)...')
+
+    const writes: Record<string, number> = {}
+
+    const interval = setInterval(() => {
+      const now = Date.now()
+      if (now - startedAt > durationMs) {
+        clearInterval(interval)
+        statusCallback?.('Finalizing settings...')
+        return
+      }
+
+      for (const target of uniqueTargets) {
+        let current: Buffer | null = null
+        try {
+          current = fs.readFileSync(target)
+        } catch {
+          current = null
+        }
+
+        if (!current || !current.equals(desired)) {
+          writes[target] = (writes[target] ?? 0) + 1
+          if (writes[target] === 1 || writes[target] % 25 === 0) {
+            console.log(`[GTA Settings] Detected overwrite -> reapplying (${writes[target]}x):`, target)
+          }
+          this.copyFileBestEffort(source, target)
+        }
+      }
+    }, intervalMs)
+
+    // Don’t keep the Electron main process alive just for this timer
+    interval.unref?.()
+  }
+
+  private isProcessRunning(processName: string): boolean {
+    try {
+      const result = execSync(`tasklist /FI "IMAGENAME eq ${processName}" /NH`, { encoding: 'utf8' })
+      return result.toLowerCase().includes(processName.toLowerCase())
+    } catch {
+      return false
+    }
+  }
+
+  public async launchClient(
+    clientId: string,
+    linkOptions: LinkOptions,
+    statusCallback?: (status: string) => void
+  ): Promise<boolean> {
     const fiveMPath = getFiveMPath() // .../FiveM.app
     const fiveMExe = getFiveMExecutable() // .../FiveM.exe
     const appsDataPath = getClientsDataPath()
@@ -27,13 +141,22 @@ export class GameManager {
     }
 
     try {
+      statusCallback?.('Preparing launch...')
+
+      // Check if GTA V or FiveM is already running
+      if (this.isProcessRunning('GTA5.exe') || this.isProcessRunning('FiveM.exe')) {
+        throw new Error('Please close GTA V and FiveM before launching a new client.')
+      }
+
       // 1. Link Mods
       if (linkOptions.mods) {
+        statusCallback?.('Linking mods...')
         this.linkFolder(path.join(clientPath, 'mods'), path.join(fiveMPath, 'mods'))
       }
 
       // 2. Link Plugins
       if (linkOptions.plugins) {
+        statusCallback?.('Linking plugins...')
         this.linkFolder(path.join(clientPath, 'plugins'), path.join(fiveMPath, 'plugins'))
       }
 
@@ -56,26 +179,73 @@ export class GameManager {
         this.linkFolder(path.join(clientPath, 'citizen'), path.join(fiveMPath, 'citizen'))
       }
 
-      // 4. GTA Settings (AppData/Roaming/CitizenFX/gta5_settings.xml)
+      // 4. GTA Settings - FiveM reads from BOTH CitizenFX AppData AND FiveM.app!
       if (linkOptions.gtaSettings) {
-        const target = getGtaSettingsPath()
-        const source = path.join(clientPath, 'settings', 'gta5_settings.xml')
-        if (target) {
-          this.linkFile(source, target)
+        statusCallback?.('Applying GTA settings...')
+        const source = this.ensureClientGtaSettingsFile(clientPath)
+        console.log('GTA Settings - Source:', source, 'exists:', fs.existsSync(source))
+
+          // CRITICAL: Delete FiveM's profile data that OVERRIDES settings.xml!
+
+          // 1. Delete KVS cache (profile key-value store)
+          const kvsPath = path.join(process.env.APPDATA || '', 'CitizenFX', 'kvs')
+          if (fs.existsSync(kvsPath)) {
+            try {
+              console.log('Clearing FiveM profile cache (KVS)...')
+              fs.rmSync(kvsPath, { recursive: true, force: true })
+              console.log('KVS cache cleared')
+            } catch (err) {
+              console.warn('Could not clear KVS cache:', err)
+            }
+          }
+
+          // 2. Backup/remove fivem_sdk.cfg (contains profile console variables that override XML)
+          const sdkCfgPath = path.join(process.env.APPDATA || '', 'CitizenFX', 'fivem_sdk.cfg')
+          if (fs.existsSync(sdkCfgPath)) {
+            try {
+              console.log('Backing up fivem_sdk.cfg (profile console variables)...')
+              const backupPath = `${sdkCfgPath}.backup_${Date.now()}`
+              fs.renameSync(sdkCfgPath, backupPath)
+              console.log('fivem_sdk.cfg backed up and removed')
+            } catch (err) {
+              console.warn('Could not backup fivem_sdk.cfg:', err)
+            }
+          }
+
+        const targets: string[] = []
+
+        // CitizenFX Roaming (PRIMARY)
+        const citizenFxTarget = getGtaSettingsPath()
+        if (citizenFxTarget) targets.push(citizenFxTarget)
+
+        // CitizenFX LocalAppData (some installs use this)
+        if (process.env.LOCALAPPDATA) targets.push(path.join(process.env.LOCALAPPDATA, 'CitizenFX', 'gta5_settings.xml'))
+
+        for (const target of targets) {
+          if (!target) continue
+          console.log('GTA Settings - Applying to:', target)
+          this.replaceFile(source, target)
         }
+
+        console.log('GTA Settings applied. Startup enforcement will keep re-applying if overwritten.')
       }
 
-      // 5. CitizenFX.ini (AppData/Roaming/CitizenFX/CitizenFX.ini)
-      if (linkOptions.citizenFxIni) {
-        const target = getCitizenFxIniPath()
-        const source = path.join(clientPath, 'settings', 'CitizenFX.ini')
-        if (target) {
-          this.linkFile(source, target)
-        }
-      }
-
+      statusCallback?.('Starting FiveM...')
       console.log('Folders linked. Launching FiveM...')
       this.spawnProcess(fiveMExe)
+
+      if (linkOptions.gtaSettings) {
+        const source = this.ensureClientGtaSettingsFile(clientPath)
+        const targets: string[] = [
+          getGtaSettingsPath() || '',
+          process.env.LOCALAPPDATA
+            ? path.join(process.env.LOCALAPPDATA, 'CitizenFX', 'gta5_settings.xml')
+            : ''
+        ]
+        this.startGtaSettingsEnforcement(source, targets, statusCallback)
+      }
+
+      statusCallback?.('Launched!')
       return true
     } catch (e) {
       console.error('Failed to launch:', e)
@@ -126,28 +296,53 @@ export class GameManager {
     fs.symlinkSync(source, target, 'junction')
   }
 
-  private linkFile(source: string, target: string) {
-    // Ensure source exists
+  private replaceFile(source: string, target: string) {
+    // Check if source exists - don't create empty file
     if (!fs.existsSync(source)) {
-      fs.writeFileSync(source, '')
+      console.warn(`Source file not found: ${source}. Skipping.`)
+      throw new Error(`Settings file not found: ${source}. Please save settings first.`)
     }
 
-    // Backup existing target
+    // Remove read-only flag from existing target if it exists
     if (fs.existsSync(target)) {
-      const backupPath = `${target}_original`
-      if (!fs.existsSync(backupPath)) {
-        fs.renameSync(target, backupPath)
-      } else {
-        fs.renameSync(target, `${target}_backup_${Date.now()}`)
+      try {
+        fs.chmodSync(target, 0o666) // Make writable
+      } catch (err) {
+        console.warn('Failed to change permissions:', err)
+      }
+
+      const backupPath = `${target}.backup`
+      try {
+        fs.copyFileSync(target, backupPath)
+        console.log(`Backed up existing file to ${backupPath}`)
+      } catch (err) {
+        console.warn('Failed to create backup:', err)
       }
     }
 
-    // Try hardlink first (no admin). Fallback to symlink.
-    try {
-      fs.linkSync(source, target)
-    } catch {
-      fs.symlinkSync(source, target, 'file')
+    // Ensure target directory exists with proper permissions
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+
+    // Delete existing target to avoid any file lock issues
+    if (fs.existsSync(target)) {
+      try {
+        fs.unlinkSync(target)
+      } catch (err) {
+        console.warn('Failed to delete existing target:', err)
+      }
     }
+
+    // Copy source to target
+    fs.copyFileSync(source, target)
+
+    // Force file system sync to ensure data is written to disk
+    const fd = fs.openSync(target, 'r+')
+    fs.fsyncSync(fd)
+    fs.closeSync(fd)
+
+
+    console.log(`Successfully replaced ${target} with ${source}`)
+    console.log(`File size: ${fs.statSync(target).size} bytes`)
   }
 
   private spawnProcess(exePath: string) {

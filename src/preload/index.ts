@@ -12,10 +12,26 @@ const api = {
   openFiveMFolder: () => ipcRenderer.invoke('open-fivem-folder'),
   updateClientLinks: (id: string, linkOptions: unknown) =>
     ipcRenderer.invoke('update-client-links', id, linkOptions),
-  launchClient: (id: string) => ipcRenderer.send('launch-client', id),
+  launchClient: (id: string) => ipcRenderer.invoke('launch-client', id),
+  onLaunchStatus: (callback: (status: string) => void) => {
+    const subscription = (_event: any, status: string) => callback(status)
+    ipcRenderer.on('launch-status', subscription)
+    return () => ipcRenderer.removeListener('launch-status', subscription)
+  },
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
-  windowClose: () => ipcRenderer.invoke('window-close')
+  windowClose: () => ipcRenderer.invoke('window-close'),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  setGamePath: (gamePath: string) => ipcRenderer.invoke('set-game-path', gamePath),
+  browseGamePath: () => ipcRenderer.invoke('browse-game-path'),
+  getClientGtaSettings: (id: string) => ipcRenderer.invoke('get-client-gta-settings', id),
+  saveClientGtaSettings: (id: string, doc: unknown) =>
+    ipcRenderer.invoke('save-client-gta-settings', id, doc),
+  importGtaSettingsFromDocuments: (id: string) =>
+    ipcRenderer.invoke('import-gta-settings-from-documents', id),
+  importGtaSettingsFromTemplate: (id: string) =>
+    ipcRenderer.invoke('import-gta-settings-from-template', id),
+  getClientStats: (id: string) => ipcRenderer.invoke('get-client-stats', id)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

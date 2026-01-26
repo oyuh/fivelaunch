@@ -1,15 +1,17 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 // import icon from '../../resources/icon.png?asset'
 import { ClientManager } from './managers/ClientManager'
 import { GameManager } from './managers/GameManager'
+import { SettingsManager } from './managers/SettingsManager'
+import { GtaSettingsManager } from './managers/GtaSettingsManager'
 import { getCitizenFxDir, getFiveMPath } from './utils/paths'
 
 function createWindow(): void {
   const appIcon = is.dev
-    ? resolve(process.cwd(), 'resources', 'Logo.png')
-    : join(process.resourcesPath, 'resources', 'Logo.png')
+    ? resolve(process.cwd(), 'resources', 'Logo-Full.ico')
+    : join(process.resourcesPath, 'resources', 'Logo-Full.ico')
 
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -48,6 +50,8 @@ app.whenReady().then(() => {
   // Instantiate Managers after app is ready
   const clientManager = new ClientManager()
   const gameManager = new GameManager()
+  const settingsManager = new SettingsManager()
+  const gtaSettingsManager = new GtaSettingsManager()
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
@@ -99,6 +103,43 @@ app.whenReady().then(() => {
     return shell.openPath(dir)
   })
 
+  ipcMain.handle('get-client-stats', (_event, id: string) => {
+    return clientManager.getClientStats(id)
+  })
+
+  ipcMain.handle('get-settings', () => {
+    return settingsManager.getSettings()
+  })
+
+  ipcMain.handle('set-game-path', (_event, gamePath: string) => {
+    settingsManager.setGamePath(gamePath)
+  })
+
+  ipcMain.handle('browse-game-path', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Select FiveM.app folder',
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('get-client-gta-settings', (_event, id: string) => {
+    return gtaSettingsManager.getClientSettings(id)
+  })
+
+  ipcMain.handle('save-client-gta-settings', (_event, id: string, doc) => {
+    gtaSettingsManager.saveClientSettings(id, doc)
+  })
+
+  ipcMain.handle('import-gta-settings-from-documents', (_event, id: string) => {
+    return gtaSettingsManager.importFromDocuments(id)
+  })
+
+  ipcMain.handle('import-gta-settings-from-template', (_event, id: string) => {
+    return gtaSettingsManager.importFromTemplate(id)
+  })
+
   ipcMain.handle('window-minimize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     win?.minimize()
@@ -119,15 +160,21 @@ app.whenReady().then(() => {
     win?.close()
   })
 
-  ipcMain.on('launch-client', async (_event, id: string) => {
+  ipcMain.handle('launch-client', async (event, id: string) => {
     try {
       const client = clientManager.getClient(id)
       if (!client) throw new Error('Client not found.')
-      await gameManager.launchClient(id, client.linkOptions)
+
+      // Send status updates back to renderer
+      const statusCallback = (status: string) => {
+        event.sender.send('launch-status', status)
+      }
+
+      await gameManager.launchClient(id, client.linkOptions, statusCallback)
+      return { success: true }
     } catch (error) {
-       console.error(error)
-       // We can send error back to renderer if needed
-       // event.sender.send('launch-error', error.message)
+      console.error('Launch error:', error)
+      return { success: false, error: (error as Error).message }
     }
   })
 
