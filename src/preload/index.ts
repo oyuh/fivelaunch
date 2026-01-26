@@ -8,8 +8,10 @@ const api = {
   deleteClient: (id: string) => ipcRenderer.invoke('delete-client', id),
   renameClient: (id: string, name: string) => ipcRenderer.invoke('rename-client', id, name),
   openClientFolder: (id: string) => ipcRenderer.invoke('open-client-folder', id),
+  openClientPluginsFolder: (id: string) => ipcRenderer.invoke('open-client-plugins-folder', id),
   openCitizenFxFolder: () => ipcRenderer.invoke('open-citizenfx-folder'),
   openFiveMFolder: () => ipcRenderer.invoke('open-fivem-folder'),
+  openFiveMPluginsFolder: () => ipcRenderer.invoke('open-fivem-plugins-folder'),
   updateClientLinks: (id: string, linkOptions: unknown) =>
     ipcRenderer.invoke('update-client-links', id, linkOptions),
   launchClient: (id: string) => ipcRenderer.invoke('launch-client', id),

@@ -72,9 +72,12 @@
     },
     "files": [
       "out/**",
-      "dist/**",
+      "package.json",
       "resources/**",
-      "package.json"
+      "!dist/**",
+      "!**/*.map",
+      "!**/*.tsbuildinfo",
+      "!**/.DS_Store"
     ],
     "extraResources": [
       {

@@ -13,6 +13,42 @@
 const fs = require('fs')
 const path = require('path')
 
+const sleepSync = (ms) => {
+  // Node-friendly synchronous sleep for small backoffs in build scripts.
+  // (Avoids converting the whole script to async.)
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  } catch {
+    // ignore
+  }
+}
+
+const copyFileWithRetry = (src, dst, { retries = 40, delayMs = 75 } = {}) => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      fs.copyFileSync(src, dst)
+      return
+    } catch (err) {
+      const code = err && typeof err === 'object' ? err.code : undefined
+      const retryable = code === 'EBUSY' || code === 'EPERM' || code === 'EACCES'
+      if (!retryable || attempt === retries) {
+        const hint = retryable
+          ? `\n\nThe file appears locked (code=${code}). Close any running FiveLaunch/Electron instance and try again.`
+          : ''
+        throw new Error(`Failed to copy file: ${src} -> ${dst}${hint}`)
+      }
+
+      // Try to remove destination and back off.
+      try {
+        fs.unlinkSync(dst)
+      } catch {
+        // ignore
+      }
+      sleepSync(delayMs)
+    }
+  }
+}
+
 const projectRoot = process.cwd()
 const distDir = path.join(projectRoot, 'dist')
 const unpackedDir = path.join(distDir, 'win-unpacked')
@@ -37,7 +73,7 @@ const copyRecursive = (src, dst) => {
   }
 
   fs.mkdirSync(path.dirname(dst), { recursive: true })
-  fs.copyFileSync(src, dst)
+  copyFileWithRetry(src, dst)
 }
 
 const main = () => {
@@ -69,12 +105,32 @@ const main = () => {
   }
 
   // Copy everything from win-unpacked to dist root.
-  for (const entry of fs.readdirSync(unpackedDir)) {
-    copyRecursive(path.join(unpackedDir, entry), path.join(distDir, entry))
+  try {
+    for (const entry of fs.readdirSync(unpackedDir)) {
+      copyRecursive(path.join(unpackedDir, entry), path.join(distDir, entry))
+    }
+    console.log('Copied win-unpacked contents into dist/.')
+    console.log('Fast EXE:', path.join(distDir, 'FiveLaunch.exe'))
+    return
+  } catch (err) {
+    console.warn('Failed to copy win-unpacked into dist/ (likely locked files).')
+    console.warn(String(err && err.message ? err.message : err))
   }
 
-  console.log('Copied win-unpacked contents into dist/.')
-  console.log('Fast EXE:', path.join(distDir, 'FiveLaunch.exe'))
+  // Fallback: copy to a side-by-side folder so builds still produce a runnable unpacked EXE.
+  const fastDir = path.join(distDir, 'fast')
+  try {
+    fs.rmSync(fastDir, { recursive: true, force: true })
+  } catch {
+    // ignore
+  }
+
+  for (const entry of fs.readdirSync(unpackedDir)) {
+    copyRecursive(path.join(unpackedDir, entry), path.join(fastDir, entry))
+  }
+
+  console.log('Copied win-unpacked contents into dist/fast/.')
+  console.log('Fast EXE:', path.join(fastDir, 'FiveLaunch.exe'))
 }
 
 main()

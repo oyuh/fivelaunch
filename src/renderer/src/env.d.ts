@@ -8,8 +8,10 @@ interface IAPI {
   deleteClient: (id: string) => Promise<void>
   renameClient: (id: string, name: string) => Promise<void>
   openClientFolder: (id: string) => Promise<string>
+  openClientPluginsFolder: (id: string) => Promise<string>
   openCitizenFxFolder: () => Promise<string>
   openFiveMFolder: () => Promise<string>
+  openFiveMPluginsFolder: () => Promise<string>
   updateClientLinks: (id: string, linkOptions: LinkOptions) => Promise<void>
   launchClient: (id: string) => Promise<{ success: boolean; error?: string }>
   onLaunchStatus: (callback: (status: string) => void) => () => void

@@ -61,6 +61,7 @@ export class ClientManager {
     const defaultLinkOptions: LinkOptions = {
       mods: true,
       plugins: true,
+      pluginsMode: 'junction',
       citizen: false,
       gtaSettings: false,
       citizenFxIni: false

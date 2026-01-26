@@ -25,7 +25,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
         run: pnpm typecheck
@@ -33,10 +33,32 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Upload build artifacts
+      - name: Package Windows (portable + fast)
+        if: github.event_name == 'push'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          pnpm exec electron-builder --config electron-builder.config.cjs --win portable
+          pnpm exec electron-builder --config electron-builder.config.cjs --win dir
+          node scripts/win-dist-fast.js
+          node scripts/zip-dist.js
+
+      - name: Upload build artifacts (dev build)
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fivelaunch-build-output
+          path: |
+            dist/**
+            out/**
+
+      - name: Upload Windows packaged artifacts
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: fivelaunch-windows
           path: |
-            dist/**
-            out/**
+            dist/FiveLaunch.exe
+            dist/FiveLaunch-Portable.exe
+            dist/FiveLaunch-windows.zip
+            dist/win-unpacked/**

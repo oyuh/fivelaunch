@@ -33,7 +33,18 @@ module.exports = {
   directories: {
     buildResources: 'resources'
   },
-  files: ['out/**', 'dist/**', 'resources/**', 'package.json'],
+  // IMPORTANT: Do not include `dist/**` here.
+  // `dist/` contains electron-builder outputs (e.g. win-unpacked/fast), and including it
+  // makes the app package recursively include itself, blowing past the 4.2GB ASAR limit.
+  files: [
+    'out/**',
+    'package.json',
+    'resources/**',
+    '!dist/**',
+    '!**/*.map',
+    '!**/*.tsbuildinfo',
+    '!**/.DS_Store'
+  ],
   extraResources: [{ from: 'resources', to: 'resources' }],
 
   // Ensure the packaged app and the EXE version info reflect the release tag when present.

@@ -2,11 +2,62 @@ import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 // import icon from '../../resources/icon.png?asset'
-import { ClientManager } from './managers/ClientManager'
-import { GameManager } from './managers/GameManager'
-import { SettingsManager } from './managers/SettingsManager'
-import { GtaSettingsManager } from './managers/GtaSettingsManager'
+import type { ClientManager } from './managers/ClientManager'
+import type { GameManager } from './managers/GameManager'
+import type { SettingsManager } from './managers/SettingsManager'
+import type { GtaSettingsManager } from './managers/GtaSettingsManager'
 import { getCitizenFxDir, getFiveMPath } from './utils/paths'
+
+const startupTimingEnabled =
+  process.env['FIVELAUNCH_STARTUP_TIMING'] === '1' || process.env['STARTUP_TIMING'] === '1'
+
+const startupT0 = Date.now()
+const startupMark = (label: string) => {
+  if (!startupTimingEnabled) return
+  const ms = Date.now() - startupT0
+  console.log(`[startup +${ms}ms] ${label}`)
+}
+
+let clientManager: ClientManager | null = null
+let gameManager: GameManager | null = null
+let settingsManager: SettingsManager | null = null
+let gtaSettingsManager: GtaSettingsManager | null = null
+
+const getClientManager = async (): Promise<ClientManager> => {
+  if (clientManager) return clientManager
+  startupMark('Loading ClientManager…')
+  const mod = await import('./managers/ClientManager')
+  clientManager = new mod.ClientManager()
+  startupMark('ClientManager ready')
+  return clientManager
+}
+
+const getGameManager = async (): Promise<GameManager> => {
+  if (gameManager) return gameManager
+  startupMark('Loading GameManager…')
+  const mod = await import('./managers/GameManager')
+  gameManager = new mod.GameManager()
+  startupMark('GameManager ready')
+  return gameManager
+}
+
+const getSettingsManager = async (): Promise<SettingsManager> => {
+  if (settingsManager) return settingsManager
+  startupMark('Loading SettingsManager…')
+  const mod = await import('./managers/SettingsManager')
+  settingsManager = new mod.SettingsManager()
+  startupMark('SettingsManager ready')
+  return settingsManager
+}
+
+const getGtaSettingsManager = async (): Promise<GtaSettingsManager> => {
+  if (gtaSettingsManager) return gtaSettingsManager
+  startupMark('Loading GtaSettingsManager…')
+  const mod = await import('./managers/GtaSettingsManager')
+  gtaSettingsManager = new mod.GtaSettingsManager()
+  startupMark('GtaSettingsManager ready')
+  return gtaSettingsManager
+}
 
 const getAppIconPath = (): string => {
   return is.dev
@@ -61,7 +112,16 @@ function createWindow(): BrowserWindow {
         <title>Starting…</title>
         <style>
           :root { color-scheme: dark; }
-          html, body { height: 100%; margin: 0; background: transparent; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+          * { box-sizing: border-box; }
+          html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: transparent;
+            font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+          }
           .card {
             height: 100%;
             display: grid;
@@ -71,7 +131,7 @@ function createWindow(): BrowserWindow {
           .panel {
             width: 100%;
             height: 100%;
-            background: rgba(20, 20, 24, 0.92);
+            background: rgba(16, 16, 20, 0.92);
             border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 16px;
             box-shadow: 0 20px 80px rgba(0,0,0,0.45);
@@ -80,31 +140,55 @@ function createWindow(): BrowserWindow {
             justify-content: center;
             gap: 14px;
             padding: 22px;
+            position: relative;
+            -webkit-app-region: drag;
           }
-          .title { font-size: 16px; font-weight: 650; color: rgba(255,255,255,0.92); letter-spacing: 0.2px; }
+          .glow {
+            position: absolute;
+            inset: -30px;
+            background: radial-gradient(closest-side, rgba(99,102,241,0.16), transparent 60%);
+            pointer-events: none;
+          }
+          .title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.92); letter-spacing: 0.2px; }
           .sub { font-size: 12px; color: rgba(255,255,255,0.58); }
           .row { display: flex; align-items: center; gap: 10px; }
-          .dots { display: inline-flex; gap: 6px; }
-          .dot { width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.18); animation: pulse 1.2s infinite ease-in-out; }
-          .dot:nth-child(2) { animation-delay: 0.15s; }
-          .dot:nth-child(3) { animation-delay: 0.30s; }
-          @keyframes pulse {
-            0%, 100% { transform: translateY(0); background: rgba(255,255,255,0.18); }
-            50% { transform: translateY(-2px); background: rgba(99, 102, 241, 0.85); }
+          .brand {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
           }
+          .pill {
+            font-size: 11px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.65);
+            letter-spacing: 0.2px;
+          }
+          .spinner {
+            width: 16px;
+            height: 16px;
+            border-radius: 999px;
+            border: 2px solid rgba(255,255,255,0.18);
+            border-top-color: rgba(99, 102, 241, 0.95);
+            animation: spin 0.9s linear infinite;
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
         </style>
       </head>
       <body>
         <div class="card">
           <div class="panel">
-            <div class="title">Starting FiveLaunch</div>
+            <div class="glow"></div>
+            <div class="brand">
+              <div class="title">FiveLaunch</div>
+              <div class="pill">Starting…</div>
+            </div>
             <div class="row">
-              <div class="dots" aria-label="Loading">
-                <div class="dot"></div>
-                <div class="dot"></div>
-                <div class="dot"></div>
-              </div>
-              <div class="sub">Loading UI…</div>
+              <div class="spinner" aria-label="Loading"></div>
+              <div class="sub">Warming up the UI</div>
             </div>
           </div>
         </div>
@@ -129,12 +213,22 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  mainWindow.on('ready-to-show', () => {
+  const showMainAndCloseSplash = () => {
+    if (!mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show()
+    }
     if (!splashWindow.isDestroyed()) {
       splashWindow.close()
     }
-    mainWindow.show()
-  })
+  }
+
+  // `ready-to-show` can be delayed a lot on some machines/builds.
+  // Prefer showing as soon as the renderer has loaded, with a fallback timeout.
+  mainWindow.webContents.once('did-finish-load', showMainAndCloseSplash)
+  mainWindow.once('ready-to-show', showMainAndCloseSplash)
+
+  const splashFallback = setTimeout(showMainAndCloseSplash, 3500)
+  splashFallback.unref?.()
 
   mainWindow.on('closed', () => {
     if (!splashWindow.isDestroyed()) {
@@ -159,11 +253,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  // Instantiate Managers after app is ready
-  const clientManager = new ClientManager()
-  const gameManager = new GameManager()
-  const settingsManager = new SettingsManager()
-  const gtaSettingsManager = new GtaSettingsManager()
+  startupMark('app.whenReady')
   const autoLaunchClientId = getLaunchClientArg(process.argv)
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
@@ -175,29 +265,33 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // Create the window ASAP; managers are loaded lazily via IPC handlers.
+  const mainWindow = createWindow()
+  startupMark('createWindow() called')
+
   // IPC Handlers
-  ipcMain.handle('get-clients', () => {
-    return clientManager.getClients()
+  ipcMain.handle('get-clients', async () => {
+    return (await getClientManager()).getClients()
   })
 
-  ipcMain.handle('create-client', (_event, name: string) => {
-    return clientManager.createClient(name)
+  ipcMain.handle('create-client', async (_event, name: string) => {
+    return (await getClientManager()).createClient(name)
   })
 
-  ipcMain.handle('delete-client', (_event, id: string) => {
-    return clientManager.deleteClient(id)
+  ipcMain.handle('delete-client', async (_event, id: string) => {
+    return (await getClientManager()).deleteClient(id)
   })
 
-  ipcMain.handle('rename-client', (_event, id: string, name: string) => {
-    return clientManager.renameClient(id, name)
+  ipcMain.handle('rename-client', async (_event, id: string, name: string) => {
+    return (await getClientManager()).renameClient(id, name)
   })
 
-  ipcMain.handle('update-client-links', (_event, id: string, linkOptions) => {
-    return clientManager.updateClientLinkOptions(id, linkOptions)
+  ipcMain.handle('update-client-links', async (_event, id: string, linkOptions) => {
+    return (await getClientManager()).updateClientLinkOptions(id, linkOptions)
   })
 
   ipcMain.handle('open-client-folder', async (_event, id: string) => {
-    const folderPath = clientManager.getClientFolderPath(id)
+    const folderPath = (await getClientManager()).getClientFolderPath(id)
     if (!folderPath) {
       throw new Error('Client folder not found.')
     }
@@ -216,16 +310,30 @@ app.whenReady().then(() => {
     return shell.openPath(dir)
   })
 
-  ipcMain.handle('get-client-stats', (_event, id: string) => {
-    return clientManager.getClientStats(id)
+  ipcMain.handle('open-fivem-plugins-folder', async () => {
+    const dir = getFiveMPath()
+    if (!dir) throw new Error('FiveM folder not found.')
+    return shell.openPath(join(dir, 'plugins'))
   })
 
-  ipcMain.handle('get-settings', () => {
-    return settingsManager.getSettings()
+  ipcMain.handle('open-client-plugins-folder', async (_event, id: string) => {
+    const folderPath = (await getClientManager()).getClientFolderPath(id)
+    if (!folderPath) {
+      throw new Error('Client folder not found.')
+    }
+    return shell.openPath(join(folderPath, 'plugins'))
   })
 
-  ipcMain.handle('set-game-path', (_event, gamePath: string) => {
-    settingsManager.setGamePath(gamePath)
+  ipcMain.handle('get-client-stats', async (_event, id: string) => {
+    return (await getClientManager()).getClientStats(id)
+  })
+
+  ipcMain.handle('get-settings', async () => {
+    return (await getSettingsManager()).getSettings()
+  })
+
+  ipcMain.handle('set-game-path', async (_event, gamePath: string) => {
+    ;(await getSettingsManager()).setGamePath(gamePath)
   })
 
   ipcMain.handle('browse-game-path', async () => {
@@ -237,20 +345,20 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('get-client-gta-settings', (_event, id: string) => {
-    return gtaSettingsManager.getClientSettings(id)
+  ipcMain.handle('get-client-gta-settings', async (_event, id: string) => {
+    return (await getGtaSettingsManager()).getClientSettings(id)
   })
 
-  ipcMain.handle('save-client-gta-settings', (_event, id: string, doc) => {
-    gtaSettingsManager.saveClientSettings(id, doc)
+  ipcMain.handle('save-client-gta-settings', async (_event, id: string, doc) => {
+    ;(await getGtaSettingsManager()).saveClientSettings(id, doc)
   })
 
-  ipcMain.handle('import-gta-settings-from-documents', (_event, id: string) => {
-    return gtaSettingsManager.importFromDocuments(id)
+  ipcMain.handle('import-gta-settings-from-documents', async (_event, id: string) => {
+    return (await getGtaSettingsManager()).importFromDocuments(id)
   })
 
-  ipcMain.handle('import-gta-settings-from-template', (_event, id: string) => {
-    return gtaSettingsManager.importFromTemplate(id)
+  ipcMain.handle('import-gta-settings-from-template', async (_event, id: string) => {
+    return (await getGtaSettingsManager()).importFromTemplate(id)
   })
 
   ipcMain.handle('window-minimize', (event) => {
@@ -275,7 +383,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle('launch-client', async (event, id: string) => {
     try {
-      const client = clientManager.getClient(id)
+      const cm = await getClientManager()
+      const gm = await getGameManager()
+      const client = cm.getClient(id)
       if (!client) throw new Error('Client not found.')
 
       // Send status updates back to renderer
@@ -283,7 +393,7 @@ app.whenReady().then(() => {
         event.sender.send('launch-status', status)
       }
 
-      await gameManager.launchClient(id, client.linkOptions, statusCallback)
+      await gm.launchClient(id, client.linkOptions, statusCallback)
       return { success: true }
     } catch (error) {
       console.error('Launch error:', error)
@@ -296,7 +406,7 @@ app.whenReady().then(() => {
       throw new Error('Shortcuts are currently supported on Windows only.')
     }
 
-    const client = clientManager.getClient(id)
+    const client = (await getClientManager()).getClient(id)
     if (!client) throw new Error('Client not found.')
 
     const desktopDir = app.getPath('desktop')
@@ -317,13 +427,13 @@ app.whenReady().then(() => {
     return { success: true, path: shortcutPath }
   })
 
-  const mainWindow = createWindow()
-
   // If launched from a shortcut, auto-launch the requested client.
   if (autoLaunchClientId) {
     setTimeout(async () => {
       try {
-        const client = clientManager.getClient(autoLaunchClientId)
+        const cm = await getClientManager()
+        const gm = await getGameManager()
+        const client = cm.getClient(autoLaunchClientId)
         if (!client) throw new Error('Client not found.')
 
         const statusCallback = (status: string) => {
@@ -333,13 +443,21 @@ app.whenReady().then(() => {
           }
         }
 
-        await gameManager.launchClient(autoLaunchClientId, client.linkOptions, statusCallback)
+        await gm.launchClient(autoLaunchClientId, client.linkOptions, statusCallback)
       } catch (error) {
         console.error('Auto-launch error:', error)
         dialog.showErrorBox('Auto-launch failed', (error as Error).message)
       }
     }, 750)
   }
+
+  // Warm up common managers after the UI is visible (optional, avoids blocking first paint).
+  mainWindow.once('ready-to-show', () => {
+    setTimeout(() => {
+      void getClientManager()
+      void getSettingsManager()
+    }, 0)
+  })
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

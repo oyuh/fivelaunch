@@ -23,11 +23,15 @@ import appLogo from '../../../resources/Logo.png'
 function App(): JSX.Element {
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [clients, setClients] = useState<ClientProfile[]>([])
+  const [clientQuery, setClientQuery] = useState('')
   const [newClientName, setNewClientName] = useState('')
   const [renameValue, setRenameValue] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [firstRunOpen, setFirstRunOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [linksOpen, setLinksOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [gamePath, setGamePath] = useState('')
   const [gtaSettingsOpen, setGtaSettingsOpen] = useState(false)
   const [gtaSettingsLoading, setGtaSettingsLoading] = useState(false)
@@ -41,6 +45,12 @@ function App(): JSX.Element {
   const [isLaunching, setIsLaunching] = useState(false)
   const [launchStatusUpdatedAt, setLaunchStatusUpdatedAt] = useState<number>(0)
   const selectedClientData = clients.find((c) => c.id === selectedClient) || null
+
+  const filteredClients = useMemo(() => {
+    const q = clientQuery.trim().toLowerCase()
+    if (!q) return clients
+    return clients.filter((c) => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q))
+  }, [clients, clientQuery])
 
   useEffect(() => {
     if (!window.api) return
@@ -113,7 +123,12 @@ function App(): JSX.Element {
       }
 
       // If status hasn't updated in a while, show a friendly hint.
-      if (launchStatusUpdatedAt && Date.now() - launchStatusUpdatedAt > 15_000) {
+      // Don't overwrite a purposeful waiting state.
+      if (
+        launchStatusUpdatedAt &&
+        Date.now() - launchStatusUpdatedAt > 15_000 &&
+        !(launchStatus && /Waiting for plugins sync/i.test(launchStatus))
+      ) {
         setLaunchStatus('Launching... (still working)')
       }
     }, 1000)
@@ -125,9 +140,11 @@ function App(): JSX.Element {
     if (!launchStatus) return null
 
     const isError = launchStatus.startsWith('Error:')
+    const isWaitingForSync = /Waiting for plugins sync/i.test(launchStatus)
 
     const steps = [
       { key: 'prepare', label: 'Prepare', match: /Preparing/i },
+      { key: 'wait', label: 'Wait', match: /Waiting for plugins sync/i },
       { key: 'link', label: 'Link', match: /Linking/i },
       { key: 'settings', label: 'Settings', match: /(Applying GTA settings|GTA Settings|Finalizing settings)/i },
       { key: 'start', label: 'Start', match: /Starting FiveM/i },
@@ -148,6 +165,14 @@ function App(): JSX.Element {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
+              {isWaitingForSync && (
+                <div
+                  className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
+                  aria-label="Waiting for sync"
+                  title="Waiting for sync"
+                />
+              )}
+
               {isLaunching && !isDone && !isError && (
                 <div className="flex items-center gap-1">
                   {steps.slice(0, 5).map((step, idx) => {
@@ -205,6 +230,12 @@ function App(): JSX.Element {
 
               <div className="truncate text-sm text-foreground">{launchStatus}</div>
             </div>
+
+            {isWaitingForSync && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Finishing the last plugins sync to keep clients isolated.
+              </div>
+            )}
           </div>
 
           {!isLaunching && (
@@ -236,8 +267,8 @@ function App(): JSX.Element {
     setCreateOpen(false)
   }
 
-  const handleDelete = async (id: string, e: React.MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation()
+  const handleDelete = async (id: string, e?: React.MouseEvent<HTMLButtonElement>) => {
+    e?.stopPropagation()
     const client = clients.find((c) => c.id === id)
     const name = client?.name || 'this client'
     const confirmed = window.confirm(`Delete ${name}? This will remove its local folder.`)
@@ -308,11 +339,25 @@ function App(): JSX.Element {
     loadClients()
   }
 
-  const handleToggleLink = async (key: keyof LinkOptions) => {
+  type ToggleLinkKey = Exclude<keyof LinkOptions, 'pluginsMode'>
+
+  const handleToggleLink = async (key: ToggleLinkKey) => {
     if (!selectedClientData) return
     const updated: LinkOptions = {
       ...selectedClientData.linkOptions,
       [key]: !selectedClientData.linkOptions[key]
+    }
+    await window.api.updateClientLinks(selectedClientData.id, updated)
+    setClients((prev) =>
+      prev.map((c) => (c.id === selectedClientData.id ? { ...c, linkOptions: updated } : c))
+    )
+  }
+
+  const handleSetPluginsMode = async (mode: NonNullable<LinkOptions['pluginsMode']>) => {
+    if (!selectedClientData) return
+    const updated: LinkOptions = {
+      ...selectedClientData.linkOptions,
+      pluginsMode: mode
     }
     await window.api.updateClientLinks(selectedClientData.id, updated)
     setClients((prev) =>
@@ -676,7 +721,7 @@ function App(): JSX.Element {
             </div>
           </DialogContent>
         </Dialog>
-        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-6 pb-6 pt-6">
+        <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pb-6 pt-6">
           <div className="mb-6 flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-semibold">FiveLaunch Clients</h1>
@@ -713,268 +758,434 @@ function App(): JSX.Element {
             </Dialog>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-            <Card>
+          <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+            <Card className="overflow-hidden">
               <CardHeader>
-                <CardTitle className="text-base">Client List</CardTitle>
-                <CardDescription>Pick a client to view details.</CardDescription>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base">Client List</CardTitle>
+                    <CardDescription>Search and select a profile.</CardDescription>
+                  </div>
+                  <div className="rounded-full border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+                    {clients.length} total
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-2">
+
+              <CardContent className="space-y-3">
+                <Input
+                  placeholder="Search by name or id…"
+                  value={clientQuery}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setClientQuery(e.target.value)}
+                />
+
                 {clients.length === 0 && (
                   <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
                     No clients yet. Create one to get started.
                   </div>
                 )}
-                {clients.map((client) => (
-                  <button
-                    key={client.id}
-                    className={`w-full rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-                      selectedClient === client.id
-                        ? 'border-primary bg-primary/10 text-foreground'
-                        : 'border-border bg-card text-muted-foreground hover:text-foreground'
-                    }`}
-                    onClick={() =>
-                      setSelectedClient((prev) => (prev === client.id ? null : client.id))
-                    }
-                  >
-                    <div className="font-medium text-foreground">{client.name}</div>
-                    <div className="text-xs text-muted-foreground">{client.id}</div>
-                  </button>
-                ))}
+
+                {clients.length > 0 && filteredClients.length === 0 && (
+                  <div className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                    No matches for “{clientQuery.trim()}”.
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {filteredClients.map((client) => {
+                    const selected = selectedClient === client.id
+                    return (
+                      <button
+                        key={client.id}
+                        className={`group w-full rounded-md border px-3 py-2 text-left text-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                          selected
+                            ? 'border-primary/60 bg-primary/10 text-foreground shadow-sm'
+                            : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/30 hover:bg-muted/30 hover:text-foreground'
+                        }`}
+                        onClick={() => setSelectedClient((prev) => (prev === client.id ? null : client.id))}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-foreground">{client.name}</div>
+                            <div className="truncate text-xs text-muted-foreground">{client.id}</div>
+                          </div>
+                          <div
+                            className={`h-2.5 w-2.5 rounded-full transition-colors ${
+                              selected ? 'bg-primary' : 'bg-muted group-hover:bg-primary/70'
+                            }`}
+                            aria-hidden="true"
+                          />
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Client Overview</CardTitle>
-                <CardDescription>Review and launch your selected client.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="rounded-md border border-border p-4 text-sm">
-                  <div className="grid gap-2 text-muted-foreground">
-                    <div>
-                      <span className="text-foreground">Name:</span>{' '}
-                      {selectedClientData?.name || '—'}
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Launch</CardTitle>
+                  <CardDescription>
+                    {selectedClientData ? 'Select options from the buttons below.' : 'Select a client to launch.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {!selectedClientData ? (
+                    <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
+                      <div className="font-medium text-foreground">No client selected</div>
+                      <div className="mt-1">Pick a client from the list on the left.</div>
                     </div>
-                    <div>
-                      <span className="text-foreground">Files:</span>{' '}
-                      {clientStatsLoading
-                        ? 'Loading...'
-                        : selectedClientData
-                          ? `${clientStats?.fileCount ?? 0} files`
-                          : '—'}
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-1">
+                        <div className="text-lg font-semibold text-foreground">{selectedClientData.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{selectedClientData.id}</div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button disabled={isLaunching} onClick={handleLaunch}>
+                          Launch Game
+                        </Button>
+                        <Button variant="secondary" onClick={() => setDetailsOpen(true)}>
+                          Details
+                        </Button>
+                        <Button variant="secondary" onClick={() => setLinksOpen(true)}>
+                          Link Options
+                        </Button>
+                        <Button variant="secondary" onClick={() => setToolsOpen(true)}>
+                          Tools
+                        </Button>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground">
+                        Files: {clientStatsLoading ? 'Loading…' : `${clientStats?.fileCount ?? 0}`}
+                        {' · '}Storage: {clientStatsLoading ? 'Loading…' : formatBytes(clientStats?.totalBytes ?? 0)}
+                        {' · '}Last played: {lastPlayedText}
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {renderLaunchProgress()}
+
+              <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Client Details</DialogTitle>
+                    <DialogDescription>Rename, view stats, and delete the client.</DialogDescription>
+                  </DialogHeader>
+
+                  {!selectedClientData ? (
+                    <div className="mt-4 text-sm text-muted-foreground">Select a client first.</div>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      <div className="rounded-md border border-border p-4 text-sm">
+                        <div className="grid gap-2 text-muted-foreground">
+                          <div>
+                            <span className="text-foreground">Name:</span> {selectedClientData.name}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Client ID:</span>{' '}
+                            <span className="font-mono text-xs">{selectedClientData.id}</span>
+                          </div>
+                          <div>
+                            <span className="text-foreground">Files:</span>{' '}
+                            {clientStatsLoading ? 'Loading…' : `${clientStats?.fileCount ?? 0} files`}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Storage:</span>{' '}
+                            {clientStatsLoading ? 'Loading…' : formatBytes(clientStats?.totalBytes ?? 0)}
+                          </div>
+                          <div>
+                            <span className="text-foreground">Last Played:</span> {lastPlayedText}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Input
+                          placeholder="Rename client"
+                          value={renameValue}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRenameValue(e.target.value)}
+                        />
+                        <Button
+                          variant="secondary"
+                          onClick={handleRename}
+                          disabled={!renameValue.trim()}
+                        >
+                          Rename
+                        </Button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Button variant="secondary" onClick={() => setDetailsOpen(false)}>
+                          Close
+                        </Button>
+                        <Button variant="destructive" onClick={() => handleDelete(selectedClientData.id)}>
+                          Delete Client
+                        </Button>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-foreground">Storage:</span>{' '}
-                      {clientStatsLoading
-                        ? 'Loading...'
-                        : selectedClientData
-                          ? formatBytes(clientStats?.totalBytes ?? 0)
-                          : '—'}
+                  )}
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={linksOpen} onOpenChange={setLinksOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Link Options</DialogTitle>
+                    <DialogDescription>Choose what is linked into FiveM.app when launching.</DialogDescription>
+                  </DialogHeader>
+
+                  {!selectedClientData ? (
+                    <div className="mt-4 text-sm text-muted-foreground">Select a client first.</div>
+                  ) : (
+                    <div className="mt-4 space-y-2">
+                      {(
+                        [
+                          ['mods', 'Mods', 'Link client mods folder'],
+                          ['plugins', 'Plugins', 'Link client plugins folder'],
+                          ['citizen', 'Citizen', 'Advanced: replaces core citizen files'],
+                          ['gtaSettings', 'GTA Settings', 'Copy client XML into game locations'],
+                          ['citizenFxIni', 'CitizenFX.ini', 'Link/replace CitizenFX.ini']
+                        ] as const
+                      ).map(([key, label, hint]) => {
+                        const enabled = !!selectedClientData.linkOptions?.[key]
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => handleToggleLink(key)}
+                            className={`flex w-full items-start justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                              enabled
+                                ? 'border-primary/50 bg-primary/10'
+                                : 'border-border bg-card hover:bg-muted/30'
+                            }`}
+                          >
+                            <div>
+                              <div className="font-medium text-foreground">{label}</div>
+                              <div className="text-xs text-muted-foreground">{hint}</div>
+                            </div>
+                            <div className="mt-1">
+                              <div
+                                className={`h-5 w-9 rounded-full border transition-colors ${
+                                  enabled ? 'border-primary/60 bg-primary/60' : 'border-border bg-muted'
+                                }`}
+                                aria-hidden="true"
+                              >
+                                <div
+                                  className={`h-4 w-4 translate-y-[2px] rounded-full bg-background shadow transition-transform ${
+                                    enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'
+                                  }`}
+                                />
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+
+                      {!!selectedClientData.linkOptions?.plugins && (
+                        <div className="mt-2 rounded-md border border-border bg-card px-3 py-2">
+                          <div className="text-sm font-medium text-foreground">Plugins mode</div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            Use <span className="text-foreground">Copy/Sync</span> if you want ReShade to work directly
+                            under <span className="text-foreground">%LOCALAPPDATA%\FiveM\FiveM.app\plugins</span> (so
+                            the in-game “Open folder” points there). Junction is faster, but Windows apps often resolve
+                            the junction to the client folder.
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleSetPluginsMode('junction')}
+                              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                                (selectedClientData.linkOptions.pluginsMode ?? 'junction') === 'junction'
+                                  ? 'border-primary/60 bg-primary/10 text-foreground'
+                                  : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
+                              }`}
+                            >
+                              Junction (fast)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSetPluginsMode('sync')}
+                              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                                (selectedClientData.linkOptions.pluginsMode ?? 'junction') === 'sync'
+                                  ? 'border-primary/60 bg-primary/10 text-foreground'
+                                  : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
+                              }`}
+                            >
+                              Copy/Sync (ReShade uses FiveM.app path)
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-4 flex justify-end">
+                        <Button variant="secondary" onClick={() => setLinksOpen(false)}>
+                          Done
+                        </Button>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-foreground">Last Played:</span> {lastPlayedText}
+                  )}
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={toolsOpen} onOpenChange={setToolsOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Tools</DialogTitle>
+                    <DialogDescription>Utilities for the selected client.</DialogDescription>
+                  </DialogHeader>
+
+                  <div className="mt-4 flex flex-col gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={!selectedClientData}
+                      onClick={handleOpenFolder}
+                    >
+                      Open Client Folder
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={!selectedClientData}
+                      onClick={handleCreateShortcut}
+                    >
+                      Create Desktop Shortcut
+                    </Button>
+
+                    <div className="mt-2 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+                      If <span className="text-foreground">Plugins</span> is linked, then
+                      <span className="text-foreground"> %LOCALAPPDATA%\FiveM\FiveM.app\plugins</span> is a
+                      junction pointing at this client&apos;s plugins folder. ReShade&apos;s in-game
+                      “Open folder” will often open the real client folder.
+                    </div>
+
+                    <Button variant="secondary" onClick={() => window.api.openFiveMPluginsFolder()}>
+                      Open FiveM Plugins Folder
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={!selectedClientData}
+                      onClick={() =>
+                        selectedClientData ? window.api.openClientPluginsFolder(selectedClientData.id) : undefined
+                      }
+                    >
+                      Open Client Plugins Folder
+                    </Button>
+                    <Button variant="secondary" onClick={() => window.api.openFiveMFolder()}>
+                      Open FiveM Folder
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={!selectedClientData}
+                      onClick={() => {
+                        setToolsOpen(false)
+                        setGtaSettingsOpen(true)
+                      }}
+                    >
+                      Edit GTA Settings
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={gtaSettingsOpen} onOpenChange={setGtaSettingsOpen}>
+                <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+                  <DialogHeader>
+                    <DialogTitle>GTA V Settings Editor</DialogTitle>
+                    <DialogDescription>
+                      Edit this client&apos;s settings.xml. These values are saved in the
+                      client folder and copied into Documents when you launch with GTA
+                      Settings enabled.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-2">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                      <span>Root element:</span>
+                      <span className="font-medium text-foreground">{gtaSettingsRoot}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span>{gtaSettingsItems.length} entries</span>
+                    </div>
+
+                    {gtaSettingsError && (
+                      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                        {gtaSettingsError}
+                      </div>
+                    )}
+
+                    {!gtaSettingsLoading && !gtaSettingsError && (
+                      <div className="space-y-4">
+                        {Object.keys(categorizedSettings).length === 0 ? (
+                          <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+                            No settings found in settings.xml.
+                          </div>
+                        ) : (
+                          Object.entries(categorizedSettings).map(([category, items]) => (
+                            <div key={category} className="rounded-md border border-border p-4">
+                              <div className="mb-3 flex items-center gap-2">
+                                <div className="h-1 w-1 rounded-full bg-primary" />
+                                <div className="text-sm font-semibold text-foreground">{category}</div>
+                                <div className="text-xs text-muted-foreground">({items.length})</div>
+                              </div>
+
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                {items.map((item) => {
+                                  const parts = item.path.split('/').filter(Boolean)
+                                  const settingName = parts[parts.length - 1]
+                                  const entries = Object.entries(item.attributes)
+
+                                  return entries.map(([attrKey, value]) => (
+                                    <div
+                                      key={`${item.id}-${attrKey}`}
+                                      className="rounded-md border border-border bg-card p-3"
+                                    >
+                                      {renderAttributeInput(item, settingName, attrKey, value, true)}
+                                    </div>
+                                  ))
+                                })}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          disabled={!selectedClientData || gtaSettingsLoading}
+                          onClick={handleImportGtaSettings}
+                        >
+                          Import from Game
+                        </Button>
+                        <Button
+                          variant="outline"
+                          disabled={!selectedClientData || gtaSettingsLoading}
+                          onClick={handleLoadFullExample}
+                        >
+                          Load Full Example
+                        </Button>
+                        <Button
+                          variant="default"
+                          disabled={!selectedClientData || !gtaSettingsDirty || gtaSettingsLoading}
+                          onClick={handleSaveGtaSettings}
+                        >
+                          Save Changes
+                        </Button>
+                      </div>
+                      <Button variant="secondary" onClick={() => setGtaSettingsOpen(false)}>
+                        Close
+                      </Button>
                     </div>
                   </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="secondary" disabled={!selectedClientData}>
-                        Client Options
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Client Options</DialogTitle>
-                        <DialogDescription>
-                          Configure links, rename the client, or open the client folder.
-                        </DialogDescription>
-                      </DialogHeader>
-
-                      <div className="mt-4 space-y-4">
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                          <Input
-                            placeholder="Rename client"
-                            value={renameValue}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                              setRenameValue(e.target.value)
-                            }
-                            disabled={!selectedClientData}
-                          />
-                          <Button
-                            variant="secondary"
-                            onClick={handleRename}
-                            disabled={!selectedClientData || !renameValue.trim()}
-                          >
-                            Rename
-                          </Button>
-                        </div>
-
-                        <div className="rounded-md border border-border p-4 text-sm">
-                          <div className="font-medium">Link Options</div>
-                          <div className="mt-3 grid gap-2 text-muted-foreground">
-                            {(
-                              [
-                                ['mods', 'Mods'],
-                                ['plugins', 'Plugins'],
-                                ['citizen', 'Citizen'],
-                                ['gtaSettings', 'GTA Settings (settings.xml in Documents)'],
-                                ['citizenFxIni', 'CitizenFX.ini']
-                              ] as const
-                            ).map(([key, label]) => (
-                              <label key={key} className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  className="h-4 w-4 accent-primary"
-                                  disabled={!selectedClientData}
-                                  checked={!!selectedClientData?.linkOptions?.[key]}
-                                  onChange={() => handleToggleLink(key)}
-                                />
-                                <span>{label}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="secondary"
-                            disabled={!selectedClientData}
-                            onClick={handleOpenFolder}
-                          >
-                            Open Client Folder
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            disabled={!selectedClientData}
-                            onClick={handleCreateShortcut}
-                          >
-                            Create Desktop Shortcut
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            disabled={!selectedClientData}
-                            onClick={(e: React.MouseEvent<HTMLButtonElement>) =>
-                              selectedClientData && handleDelete(selectedClientData.id, e)
-                            }
-                          >
-                            Delete Client
-                          </Button>
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-
-                  <Dialog open={gtaSettingsOpen} onOpenChange={setGtaSettingsOpen}>
-                    <DialogTrigger asChild>
-                      <Button variant="secondary" disabled={!selectedClientData}>
-                        Edit GTA Settings
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
-                      <DialogHeader>
-                        <DialogTitle>GTA V Settings Editor</DialogTitle>
-                        <DialogDescription>
-                          Edit this client&apos;s settings.xml. These values are saved in the
-                          client folder and copied into Documents when you launch with GTA
-                          Settings enabled.
-                        </DialogDescription>
-                      </DialogHeader>
-
-                      <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-2">
-                        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                          <span>Root element:</span>
-                          <span className="font-medium text-foreground">{gtaSettingsRoot}</span>
-                          <span className="text-muted-foreground">·</span>
-                          <span>{gtaSettingsItems.length} entries</span>
-                        </div>
-
-                        {gtaSettingsError && (
-                          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                            {gtaSettingsError}
-                          </div>
-                        )}
-
-                        {!gtaSettingsLoading && !gtaSettingsError && (
-                          <div className="space-y-4">
-                            {Object.keys(categorizedSettings).length === 0 ? (
-                              <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                                No settings found in settings.xml.
-                              </div>
-                            ) : (
-                              Object.entries(categorizedSettings).map(([category, items]) => (
-                                <div key={category} className="rounded-md border border-border p-4">
-                                  <div className="mb-3 flex items-center gap-2">
-                                    <div className="h-1 w-1 rounded-full bg-primary" />
-                                    <div className="text-sm font-semibold text-foreground">
-                                      {category}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">({items.length})</div>
-                                  </div>
-
-                                  <div className="grid gap-3 sm:grid-cols-2">
-                                    {items.map((item) => {
-                                      const parts = item.path.split('/').filter(Boolean)
-                                      const settingName = parts[parts.length - 1]
-                                      const entries = Object.entries(item.attributes)
-
-                                      return entries.map(([attrKey, value]) => (
-                                        <div
-                                          key={`${item.id}-${attrKey}`}
-                                          className="rounded-md border border-border bg-card p-3"
-                                        >
-                                          {renderAttributeInput(item, settingName, attrKey, value, true)}
-                                        </div>
-                                      ))
-                                    })}
-                                  </div>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        )}
-
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Button
-                              variant="secondary"
-                              disabled={!selectedClientData || gtaSettingsLoading}
-                              onClick={handleImportGtaSettings}
-                            >
-                              Import from Game
-                            </Button>
-                            <Button
-                              variant="outline"
-                              disabled={!selectedClientData || gtaSettingsLoading}
-                              onClick={handleLoadFullExample}
-                            >
-                              Load Full Example
-                            </Button>
-                            <Button
-                              variant="default"
-                              disabled={!selectedClientData || !gtaSettingsDirty || gtaSettingsLoading}
-                              onClick={handleSaveGtaSettings}
-                            >
-                              Save Changes
-                            </Button>
-                          </div>
-                          <Button variant="secondary" onClick={() => setGtaSettingsOpen(false)}>
-                            Close
-                          </Button>
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-
-                  <Button disabled={!selectedClientData || isLaunching} onClick={handleLaunch}>
-                    Launch Game
-                  </Button>
-                  {renderLaunchProgress()}
-                </div>
-              </CardContent>
-            </Card>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
         </div>
 
