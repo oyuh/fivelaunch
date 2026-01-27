@@ -1364,7 +1364,7 @@ export class GameManager {
 
       // 2. Link Plugins
       if (linkOptions.plugins) {
-        const pluginsMode = linkOptions.pluginsMode ?? 'junction'
+        const pluginsMode = linkOptions.pluginsMode ?? 'sync'
         const clientPluginsDir = path.join(clientPath, 'plugins')
         const gamePluginsDir = path.join(fiveMPath, 'plugins')
 

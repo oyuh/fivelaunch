@@ -568,6 +568,21 @@ app.whenReady().then(() => {
     return shell.openPath(join(folderPath, 'plugins'))
   })
 
+  ipcMain.handle('list-client-mods', async (_event, id: string) => {
+    const folderPath = (await getClientManager()).getClientFolderPath(id)
+    if (!folderPath) {
+      throw new Error('Client folder not found.')
+    }
+
+    const modsPath = join(folderPath, 'mods')
+    if (!fs.existsSync(modsPath)) return []
+
+    const entries = await fs.promises.readdir(modsPath, { withFileTypes: true })
+    return entries
+      .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  })
+
   ipcMain.handle('get-client-stats', async (_event, id: string) => {
     return (await getClientManager()).getClientStats(id)
   })

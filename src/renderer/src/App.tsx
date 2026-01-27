@@ -20,7 +20,6 @@ import {
 import {
   Settings as SettingsIcon,
   Plus,
-  Play,
   Info,
   Link2,
   Wrench,
@@ -54,6 +53,9 @@ function App(): JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [linksOpen, setLinksOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [modsEntries, setModsEntries] = useState<string[]>([])
+  const [modsLoading, setModsLoading] = useState(false)
+  const [modsError, setModsError] = useState<string | null>(null)
   const [gamePath, setGamePath] = useState('')
   const [minimizeToTrayOnGameLaunch, setMinimizeToTrayOnGameLaunch] = useState(false)
   const [gtaSettingsOpen, setGtaSettingsOpen] = useState(false)
@@ -167,6 +169,37 @@ function App(): JSX.Element {
     if (!gtaSettingsOpen || !selectedClientData) return
     void loadGtaSettings(selectedClientData.id)
   }, [gtaSettingsOpen, selectedClientData?.id])
+
+  useEffect(() => {
+    if (!detailsOpen || !selectedClientData) return
+    let cancelled = false
+
+    const run = async () => {
+      try {
+        if (typeof window.api.listClientMods !== 'function') {
+          setModsEntries([])
+          setModsError('Mods listing is unavailable (restart the app to reload the preload script).')
+          return
+        }
+        setModsError(null)
+        setModsLoading(true)
+        const entries = await window.api.listClientMods(selectedClientData.id)
+        if (!cancelled) setModsEntries(entries)
+      } catch (error) {
+        if (!cancelled) {
+          setModsEntries([])
+          setModsError((error as Error).message || 'Failed to load mods folder.')
+        }
+      } finally {
+        if (!cancelled) setModsLoading(false)
+      }
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [detailsOpen, selectedClientData?.id])
 
   useEffect(() => {
     if (!selectedClientData || !window.api) {
@@ -512,9 +545,15 @@ function App(): JSX.Element {
 
   const handleToggleLink = async (key: ToggleLinkKey) => {
     if (!selectedClientData) return
+    const nextValue = !selectedClientData.linkOptions[key]
     const updated: LinkOptions = {
       ...selectedClientData.linkOptions,
-      [key]: !selectedClientData.linkOptions[key]
+      [key]: nextValue
+    }
+
+    // If enabling plugins and the user hasn't chosen a mode, default to Copy/Sync.
+    if (key === 'plugins' && nextValue && !updated.pluginsMode) {
+      updated.pluginsMode = 'sync'
     }
     await window.api.updateClientLinks(selectedClientData.id, updated)
     setClients((prev) =>
@@ -755,6 +794,75 @@ function App(): JSX.Element {
           : null
 
   const canLaunch = Boolean(selectedClientData) && Boolean(gamePath.trim()) && !gameBusyState.pluginsSyncBusy && !isLaunching
+
+  const LaunchLogo = (): JSX.Element => (
+    <div
+      className="h-16 w-16"
+      aria-hidden="true"
+      style={{
+        backgroundColor: 'hsl(var(--primary))',
+        WebkitMaskImage: `url(${appLogo})`,
+        WebkitMaskRepeat: 'no-repeat',
+        WebkitMaskSize: 'contain',
+        WebkitMaskPosition: 'center',
+        maskImage: `url(${appLogo})`,
+        maskRepeat: 'no-repeat',
+        maskSize: 'contain',
+        maskPosition: 'center'
+      }}
+    />
+  )
+
+  const ActionTile = ({
+    title,
+    description,
+    icon,
+    onClick,
+    disabled,
+    disabledReason
+  }: {
+    title: string
+    description: string
+    icon: JSX.Element
+    onClick: () => void
+    disabled?: boolean
+    disabledReason?: string
+  }): JSX.Element => {
+    const content = (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={`group relative flex min-h-[96px] w-full flex-col items-start justify-between gap-2 rounded-xl border px-4 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          disabled
+            ? 'cursor-not-allowed border-border bg-muted/20 opacity-60'
+            : 'border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/30'
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <div
+            className={`flex h-9 w-9 items-center justify-center rounded-lg border ${
+              disabled
+                ? 'border-border bg-muted/30 text-muted-foreground'
+                : 'border-primary/20 bg-primary/10 text-primary'
+            }`}
+          >
+            {icon}
+          </div>
+          <div className="text-sm font-semibold text-foreground">{title}</div>
+        </div>
+        <div className="text-xs text-muted-foreground">{description}</div>
+      </button>
+    )
+
+    if (!disabled || !disabledReason) return content
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent>{disabledReason}</TooltipContent>
+      </Tooltip>
+    )
+  }
 
   if (!window.api) {
     return (
@@ -1082,13 +1190,7 @@ function App(): JSX.Element {
 
             <div className="space-y-4">
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Launch</CardTitle>
-                  <CardDescription>
-                    {selectedClientData ? 'Select options from the buttons below.' : 'Select a client to launch.'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-4 pt-6">
                   {!selectedClientData ? (
                     <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
                       <div className="font-medium text-foreground">No client selected</div>
@@ -1096,58 +1198,124 @@ function App(): JSX.Element {
                     </div>
                   ) : (
                     <>
-                      <div className="flex flex-col gap-1">
-                        <div className="text-lg font-semibold text-foreground">{selectedClientData.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">{selectedClientData.id}</div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
+                      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="inline-flex">
-                              <Button disabled={!canLaunch} onClick={handleLaunch}>
-                                <Play className="h-4 w-4" />
-                                Launch
-                              </Button>
-                            </span>
+                            <button
+                              type="button"
+                              disabled={!canLaunch}
+                              onClick={handleLaunch}
+                              className={`relative h-[260px] w-full rounded-2xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                                canLaunch
+                                  ? 'border-primary/30 bg-primary/10 hover:border-primary/50 hover:bg-primary/15'
+                                  : 'cursor-not-allowed border-border bg-muted/20 opacity-70'
+                              }`}
+                            >
+                              <div className="absolute inset-0 overflow-hidden rounded-2xl">
+                                {/* Abstract background (keeps focus on logo + CTA) */}
+                                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-amber-500/10" />
+                                <div
+                                  className="absolute inset-0 opacity-90"
+                                  style={{
+                                    backgroundImage:
+                                      'radial-gradient(800px 420px at 20% 15%, hsl(var(--primary) / 0.18), transparent 60%), radial-gradient(600px 380px at 85% 30%, rgba(245, 158, 11, 0.14), transparent 60%), radial-gradient(520px 360px at 50% 110%, rgba(16, 185, 129, 0.10), transparent 60%)'
+                                  }}
+                                />
+                                <div
+                                  className="absolute inset-0 opacity-[0.09]"
+                                  style={{
+                                    backgroundImage:
+                                      'repeating-linear-gradient(115deg, rgba(255,255,255,0.18) 0px, rgba(255,255,255,0.18) 1px, transparent 1px, transparent 14px)'
+                                  }}
+                                />
+                              </div>
+
+                              <div className="relative z-10 flex h-full flex-col justify-between">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-foreground">
+                                      {selectedClientData.name}
+                                    </div>
+                                    <div className="truncate text-[11px] text-muted-foreground">
+                                      {canLaunch ? 'Ready' : launchDisabledReason}
+                                    </div>
+                                  </div>
+                                  <div
+                                    className={`h-3 w-3 shrink-0 rounded-full ${
+                                      gameBusyState.pluginsSyncBusy
+                                        ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.55)] animate-pulse'
+                                        : isLaunching
+                                          ? 'bg-primary shadow-[0_0_14px_hsl(var(--primary))] animate-pulse'
+                                          : canLaunch
+                                            ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.55)]'
+                                            : 'bg-muted'
+                                    }`}
+                                    aria-hidden="true"
+                                  />
+                                </div>
+
+                                <div className="flex flex-col items-center justify-center gap-3">
+                                  <LaunchLogo />
+                                  <div className="text-sm font-semibold text-foreground">Launch</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {canLaunch ? 'Click to launch this client' : 'Fix the requirement above'}
+                                  </div>
+                                </div>
+
+                                <div className="text-[11px] text-muted-foreground">
+                                  {gameBusyState.pluginsSyncBusy
+                                    ? 'Waiting for plugin sync to finish…'
+                                    : isLaunching
+                                      ? 'Launching…'
+                                      : 'Launch is ready.'}
+                                </div>
+                              </div>
+                            </button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            {launchDisabledReason ?? 'Launch FiveM using this client'}
+                            {canLaunch ? 'Launch selected client' : launchDisabledReason ?? 'Cannot launch right now'}
                           </TooltipContent>
                         </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="secondary" onClick={() => setDetailsOpen(true)}>
-                              <Info className="h-4 w-4" />
-                              Details
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Rename, stats, delete</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="secondary" onClick={() => setLinksOpen(true)}>
-                              <Link2 className="h-4 w-4" />
-                              Link Options
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Choose what gets linked into FiveM.app</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button variant="secondary" onClick={() => setToolsOpen(true)}>
-                              <Wrench className="h-4 w-4" />
-                              Tools
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Utilities (folders, shortcuts, etc.)</TooltipContent>
-                        </Tooltip>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <ActionTile
+                            title="Details"
+                            description="Rename/delete + stats + mods list"
+                            icon={<Info className="h-4 w-4" />}
+                            onClick={() => setDetailsOpen(true)}
+                          />
+                          <ActionTile
+                            title="Link Options"
+                            description="What gets linked + plugins mode"
+                            icon={<Link2 className="h-4 w-4" />}
+                            onClick={() => setLinksOpen(true)}
+                          />
+                          <ActionTile
+                            title="GTA Settings"
+                            description="Edit settings.xml for this client"
+                            icon={<Wrench className="h-4 w-4" />}
+                            disabled={!selectedClientData.linkOptions?.gtaSettings}
+                            disabledReason="Enable GTA Settings in Link Options first"
+                            onClick={() => setGtaSettingsOpen(true)}
+                          />
+                          <ActionTile
+                            title="Refs"
+                            description="Open folders (client, FiveM, CitizenFX)"
+                            icon={<FolderOpen className="h-4 w-4" />}
+                            onClick={() => setToolsOpen(true)}
+                          />
+                        </div>
                       </div>
 
-                      <div className="text-xs text-muted-foreground">
-                        Files: {clientStatsLoading ? 'Loading…' : `${clientStats?.fileCount ?? 0}`}
-                        {' · '}Storage: {clientStatsLoading ? 'Loading…' : formatBytes(clientStats?.totalBytes ?? 0)}
-                        {' · '}Last played: {lastPlayedText}
+                      <div className="space-y-1 text-xs text-muted-foreground">
+                        <div>
+                          Files: {clientStatsLoading ? 'Loading…' : `${clientStats?.fileCount ?? 0}`}
+                          {' · '}Storage: {clientStatsLoading ? 'Loading…' : formatBytes(clientStats?.totalBytes ?? 0)}
+                          {' · '}Last played: {lastPlayedText}
+                        </div>
+                        <div className="truncate font-mono text-[11px] text-muted-foreground/80">
+                          {selectedClientData.id}
+                        </div>
                       </div>
                     </>
                   )}
@@ -1162,7 +1330,7 @@ function App(): JSX.Element {
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Client Details</DialogTitle>
-                    <DialogDescription>Rename, view stats, and delete the client.</DialogDescription>
+                    <DialogDescription>Rename, view stats, delete, and see this client’s mods folder.</DialogDescription>
                   </DialogHeader>
 
                   {!selectedClientData ? (
@@ -1207,6 +1375,52 @@ function App(): JSX.Element {
                         </Button>
                       </div>
 
+                      <div className="rounded-md border border-border p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-foreground">Mods folder</div>
+                            <div className="text-xs text-muted-foreground">Entries inside this client’s mods folder.</div>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {modsLoading ? 'Loading…' : `${modsEntries.length} item(s)`}
+                          </div>
+                        </div>
+
+                        {modsError && (
+                          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                            {modsError}
+                          </div>
+                        )}
+
+                        {!modsError && (
+                          <div className="mt-3 max-h-48 overflow-auto rounded-md border border-border bg-muted/20 p-3">
+                            {modsLoading ? (
+                              <div className="text-sm text-muted-foreground">Loading…</div>
+                            ) : modsEntries.length === 0 ? (
+                              <div className="text-sm text-muted-foreground">No mods found.</div>
+                            ) : (
+                              <div className="space-y-1 font-mono text-xs">
+                                {modsEntries.map((name) => (
+                                  <div key={name} className="truncate text-foreground/90">
+                                    {name}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="secondary" onClick={handleOpenFolder}>
+                          <FolderOpen className="h-4 w-4" />
+                          Open Client Folder
+                        </Button>
+                        <Button variant="secondary" onClick={handleCreateShortcut}>
+                          Create Desktop Shortcut
+                        </Button>
+                      </div>
+
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <Button variant="secondary" onClick={() => setDetailsOpen(false)}>
                           Close
@@ -1224,7 +1438,10 @@ function App(): JSX.Element {
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Link Options</DialogTitle>
-                    <DialogDescription>Choose what is linked into FiveM.app when launching.</DialogDescription>
+                    <DialogDescription>
+                      Choose what this client controls inside <span className="text-foreground">FiveM.app</span>.
+                      Plugins defaults to <span className="text-foreground">Copy/Sync</span>.
+                    </DialogDescription>
                   </DialogHeader>
 
                   {!selectedClientData ? (
@@ -1278,33 +1495,33 @@ function App(): JSX.Element {
                         <div className="mt-2 rounded-md border border-border bg-card px-3 py-2">
                           <div className="text-sm font-medium text-foreground">Plugins mode</div>
                           <div className="mt-0.5 text-xs text-muted-foreground">
-                            Use <span className="text-foreground">Copy/Sync</span> if you want ReShade to work directly
-                            under <span className="text-foreground">%LOCALAPPDATA%\FiveM\FiveM.app\plugins</span> (so
-                            the in-game “Open folder” points there). Junction is faster, but Windows apps often resolve
-                            the junction to the client folder.
+                            <span className="text-foreground">Copy/Sync</span> is recommended. It keeps
+                            <span className="text-foreground"> %LOCALAPPDATA%\FiveM\FiveM.app\plugins</span> as a real
+                            folder so in-game “Open folder” points where you expect. Junction is faster, but Windows apps
+                            often resolve the junction to the client folder.
                           </div>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <button
                               type="button"
+                              onClick={() => handleSetPluginsMode('sync')}
+                              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                                (selectedClientData.linkOptions.pluginsMode ?? 'sync') === 'sync'
+                                  ? 'border-primary/60 bg-primary/10 text-foreground'
+                                  : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
+                              }`}
+                            >
+                              Copy/Sync (default)
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleSetPluginsMode('junction')}
                               className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                                (selectedClientData.linkOptions.pluginsMode ?? 'junction') === 'junction'
+                                selectedClientData.linkOptions.pluginsMode === 'junction'
                                   ? 'border-primary/60 bg-primary/10 text-foreground'
                                   : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
                               }`}
                             >
                               Junction (fast)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSetPluginsMode('sync')}
-                              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                                (selectedClientData.linkOptions.pluginsMode ?? 'junction') === 'sync'
-                                  ? 'border-primary/60 bg-primary/10 text-foreground'
-                                  : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
-                              }`}
-                            >
-                              Copy/Sync (ReShade uses FiveM.app path)
                             </button>
                           </div>
                         </div>
@@ -1323,35 +1540,18 @@ function App(): JSX.Element {
               <Dialog open={toolsOpen} onOpenChange={setToolsOpen}>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Tools</DialogTitle>
-                    <DialogDescription>Utilities for the selected client.</DialogDescription>
+                    <DialogTitle>Refs</DialogTitle>
+                    <DialogDescription>Quick links to open useful folders.</DialogDescription>
                   </DialogHeader>
 
-                  <div className="mt-4 flex flex-col gap-2">
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <Button
                       variant="secondary"
                       disabled={!selectedClientData}
                       onClick={handleOpenFolder}
                     >
-                      Open Client Folder
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={!selectedClientData}
-                      onClick={handleCreateShortcut}
-                    >
-                      Create Desktop Shortcut
-                    </Button>
-
-                    <div className="mt-2 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-                      If <span className="text-foreground">Plugins</span> is linked, then
-                      <span className="text-foreground"> %LOCALAPPDATA%\FiveM\FiveM.app\plugins</span> is a
-                      junction pointing at this client&apos;s plugins folder. ReShade&apos;s in-game
-                      “Open folder” will often open the real client folder.
-                    </div>
-
-                    <Button variant="secondary" onClick={() => window.api.openFiveMPluginsFolder()}>
-                      Open FiveM Plugins Folder
+                      <FolderOpen className="h-4 w-4" />
+                      Client Folder
                     </Button>
                     <Button
                       variant="secondary"
@@ -1360,20 +1560,23 @@ function App(): JSX.Element {
                         selectedClientData ? window.api.openClientPluginsFolder(selectedClientData.id) : undefined
                       }
                     >
-                      Open Client Plugins Folder
+                      <FolderOpen className="h-4 w-4" />
+                      Client Plugins
                     </Button>
                     <Button variant="secondary" onClick={() => window.api.openFiveMFolder()}>
-                      Open FiveM Folder
+                      <FolderOpen className="h-4 w-4" />
+                      FiveM Folder
                     </Button>
-                    <Button
-                      variant="outline"
-                      disabled={!selectedClientData}
-                      onClick={() => {
-                        setToolsOpen(false)
-                        setGtaSettingsOpen(true)
-                      }}
-                    >
-                      Edit GTA Settings
+                    <Button variant="secondary" onClick={() => window.api.openFiveMPluginsFolder()}>
+                      <FolderOpen className="h-4 w-4" />
+                      FiveM Plugins
+                    </Button>
+                    <Button variant="secondary" onClick={() => window.api.openCitizenFxFolder()}>
+                      <FolderOpen className="h-4 w-4" />
+                      CitizenFX Folder
+                    </Button>
+                    <Button variant="secondary" onClick={() => setToolsOpen(false)}>
+                      Close
                     </Button>
                   </div>
                 </DialogContent>

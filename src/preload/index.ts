@@ -9,6 +9,7 @@ const api = {
   renameClient: (id: string, name: string) => ipcRenderer.invoke('rename-client', id, name),
   openClientFolder: (id: string) => ipcRenderer.invoke('open-client-folder', id),
   openClientPluginsFolder: (id: string) => ipcRenderer.invoke('open-client-plugins-folder', id),
+  listClientMods: (id: string) => ipcRenderer.invoke('list-client-mods', id),
   openCitizenFxFolder: () => ipcRenderer.invoke('open-citizenfx-folder'),
   openFiveMFolder: () => ipcRenderer.invoke('open-fivem-folder'),
   openFiveMPluginsFolder: () => ipcRenderer.invoke('open-fivem-plugins-folder'),

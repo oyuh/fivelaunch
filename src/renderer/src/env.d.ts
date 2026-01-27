@@ -18,6 +18,7 @@ interface IAPI {
   renameClient: (id: string, name: string) => Promise<void>
   openClientFolder: (id: string) => Promise<string>
   openClientPluginsFolder: (id: string) => Promise<string>
+  listClientMods: (id: string) => Promise<string[]>
   openCitizenFxFolder: () => Promise<string>
   openFiveMFolder: () => Promise<string>
   openFiveMPluginsFolder: () => Promise<string>
