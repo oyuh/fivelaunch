@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process')
+const { execSync, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 const readline = require('readline/promises')
 
 const rl = readline.createInterface({
@@ -10,9 +11,28 @@ const rl = readline.createInterface({
   output: process.stdout
 })
 
-const run = (cmd, opts = {}) => {
-  const stdio = opts.stdio || 'pipe'
-  return execSync(cmd, { stdio, encoding: 'utf8' }).toString().trim()
+const run = (file, args = [], opts = {}) => {
+  const res = spawnSync(file, args, {
+    stdio: opts.stdio || 'pipe',
+    encoding: 'utf8',
+    shell: false
+  })
+
+  if (res.error) throw res.error
+  if (typeof res.status === 'number' && res.status !== 0) {
+    const msg = (res.stderr || res.stdout || '').toString().trim()
+    throw new Error(msg || `${file} exited with code ${res.status}`)
+  }
+
+  return (res.stdout || '').toString().trim()
+}
+
+const runInherit = (file, args = []) => {
+  const res = spawnSync(file, args, { stdio: 'inherit', shell: false })
+  if (res.error) throw res.error
+  if (typeof res.status === 'number' && res.status !== 0) {
+    throw new Error(`${file} exited with code ${res.status}`)
+  }
 }
 
 const logStep = (label) => {
@@ -27,9 +47,34 @@ const ask = async (q, { defaultValue } = {}) => {
 
 const confirm = async (q, { defaultYes = false } = {}) => {
   const hint = defaultYes ? 'Y/n' : 'y/N'
-  const ans = (await ask(`${q} (${hint})`, { defaultValue: '' })).toLowerCase()
-  if (!ans) return defaultYes
-  return ans === 'y' || ans === 'yes'
+  while (true) {
+    const ans = (await ask(`${q} (${hint})`, { defaultValue: '' })).toLowerCase()
+    if (!ans) return defaultYes
+    if (ans === 'y' || ans === 'yes') return true
+    if (ans === 'n' || ans === 'no') return false
+    console.log('Please answer y or n.')
+  }
+}
+
+const stripWrappingQuotes = (s) => {
+  const t = String(s || '').trim()
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    return t.slice(1, -1).trim()
+  }
+  return t
+}
+
+const readMultilineMessage = async (introPrompt) => {
+  console.log(introPrompt)
+  console.log('Enter your message. Finish by typing a line with just: """')
+  const lines = []
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const line = await rl.question('> ')
+    if (line.trim() === '"""') break
+    lines.push(line)
+  }
+  return lines.join('\n').trimEnd()
 }
 
 const normalizeVersion = (v) => String(v || '').trim().replace(/^v/i, '')
@@ -72,23 +117,25 @@ const main = async () => {
     logStep('FiveLaunch Release CLI')
 
     try {
-      run('git --version')
-      const inside = run('git rev-parse --is-inside-work-tree')
+      run('git', ['--version'])
+      const inside = run('git', ['rev-parse', '--is-inside-work-tree'])
       if (inside !== 'true') throw new Error('not a git repo')
     } catch {
       console.error('This script must be run inside a git repository with git installed.')
       process.exit(1)
     }
 
-    const branch = run('git rev-parse --abbrev-ref HEAD')
-    const statusShort = run('git status --porcelain')
+    const branch = run('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const statusShort = run('git', ['status', '--porcelain'])
 
     const { pkgPath, raw, json: pkg } = readPkg()
     const currentPkgVersion = normalizeVersion(pkg.version)
 
     let latestTag = ''
     try {
-      latestTag = run('git fetch --tags --quiet && git tag --sort=-creatordate | head -n 1')
+      // Keep this robust across shells/OS: do it in two calls.
+      run('git', ['fetch', '--tags', '--quiet'])
+      latestTag = run('git', ['tag', '--sort=-creatordate']).split(/\r?\n/).filter(Boolean)[0] || ''
     } catch {
       // ignore
     }
@@ -116,10 +163,12 @@ const main = async () => {
     if (suggestedMajor) console.log(`  3) major  -> ${suggestedMajor}`)
     console.log('  4) custom -> type your own')
 
-    const choice = await ask('Select 1-4', { defaultValue: '1' })
+    const choice = await ask('Select 1-4 (or type a version like 0.1.11)', { defaultValue: '1' })
 
     let version = null
-    if (choice === '2') version = suggestedMinor
+    if (parseSemver(choice)) {
+      version = normalizeVersion(choice)
+    } else if (choice === '2') version = suggestedMinor
     else if (choice === '3') version = suggestedMajor
     else if (choice === '4') {
       version = await ask('Enter version (MAJOR.MINOR.PATCH)', { defaultValue: suggestedPatch })
@@ -134,9 +183,11 @@ const main = async () => {
     }
 
     const tag = `v${version}`
-    const tagDesc = await ask('Optional tag descriptor (e.g. hotfix, leave empty)', {
+    const tagDesc = stripWrappingQuotes(
+      await ask('Optional tag descriptor (e.g. hotfix, leave empty)', {
       defaultValue: ''
-    })
+      })
+    )
     const tagMessage = tagDesc ? `${tag} - ${tagDesc}` : tag
 
     // Version bump
@@ -152,7 +203,7 @@ const main = async () => {
     const runChecks = await confirm('Run pnpm typecheck before committing?', { defaultYes: true })
     if (runChecks) {
       logStep('Running pnpm typecheck')
-      execSync('pnpm -s typecheck', { stdio: 'inherit' })
+      runInherit('pnpm', ['-s', 'typecheck'])
     }
 
     // Stage
@@ -163,9 +214,9 @@ const main = async () => {
     }
 
     logStep('Staging changes')
-    execSync('git add -A', { stdio: 'inherit' })
+    runInherit('git', ['add', '-A'])
 
-    const cached = run('git diff --cached --stat')
+    const cached = run('git', ['diff', '--cached', '--stat'])
     if (!cached) {
       console.log('No staged changes. Nothing to release.')
       return
@@ -174,19 +225,35 @@ const main = async () => {
     console.log('\nStaged changes:\n' + cached)
 
     const commitDefault = `Release ${tag}`
-    const commitMessage = await ask('Commit message', { defaultValue: commitDefault })
+    let commitMessage = stripWrappingQuotes(
+      await ask('Commit message (type """ for multi-line)', { defaultValue: commitDefault })
+    )
+
+    if (commitMessage === '"""') {
+      commitMessage = await readMultilineMessage('Multi-line commit message mode')
+      if (!commitMessage.trim()) {
+        console.log('Empty commit message. Aborted.')
+        return
+      }
+    }
 
     const doCommit = await confirm(`Create commit now?`, { defaultYes: true })
     if (!doCommit) return
 
     logStep('Creating commit')
+    const msgFile = path.join(os.tmpdir(), `fivelaunch-release-message-${Date.now()}.txt`)
     try {
-      execSync(`git commit -m "${String(commitMessage).replace(/\"/g, '\\"')}"`, {
-        stdio: 'inherit'
-      })
+      fs.writeFileSync(msgFile, `${commitMessage}\n`, 'utf8')
+      runInherit('git', ['commit', '-F', msgFile])
     } catch {
       console.error('git commit failed. (Maybe nothing changed, or hooks failed.)')
       process.exit(1)
+    } finally {
+      try {
+        fs.unlinkSync(msgFile)
+      } catch {
+        // ignore
+      }
     }
 
     const createTag = await confirm(`Create annotated tag ${tag}?`, { defaultYes: true })
@@ -194,9 +261,7 @@ const main = async () => {
 
     logStep('Creating tag')
     try {
-      execSync(`git tag -a ${tag} -m "${String(tagMessage).replace(/\"/g, '\\"')}"`, {
-        stdio: 'inherit'
-      })
+      runInherit('git', ['tag', '-a', tag, '-m', tagMessage])
     } catch {
       console.error('Failed to create tag. It may already exist.')
       process.exit(1)
@@ -207,7 +272,7 @@ const main = async () => {
     })
     if (push) {
       logStep('Pushing to origin')
-      execSync('git push origin HEAD --follow-tags', { stdio: 'inherit' })
+      runInherit('git', ['push', 'origin', 'HEAD', '--follow-tags'])
     } else {
       console.log('Skipped push. To push later:')
       console.log(`  git push origin HEAD --follow-tags`)
