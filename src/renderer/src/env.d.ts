@@ -27,13 +27,23 @@ interface IAPI {
   getResolvedGamePath: () => Promise<string | null>
   getAppLogs: () => Promise<MainAppLogEntry[]>
   clearAppLogs: () => Promise<void>
+  getUpdateStatus: () => Promise<{
+    currentVersion: string
+    latestVersion: string | null
+    latestUrl: string | null
+    isUpdateAvailable: boolean
+    checkedAt: number
+    source: 'releases-latest' | 'tags-latest' | 'error'
+    error?: string
+  }>
   onAppLog: (callback: (entry: MainAppLogEntry) => void) => () => void
   getGameBusyState: () => Promise<GameBusyState>
   windowMinimize: () => Promise<void>
   windowToggleMaximize: () => Promise<void>
   windowClose: () => Promise<void>
-  getSettings: () => Promise<{ gamePath?: string }>
+  getSettings: () => Promise<{ gamePath?: string; minimizeToTrayOnGameLaunch?: boolean }>
   setGamePath: (gamePath: string) => Promise<void>
+  setMinimizeToTrayOnGameLaunch: (enabled: boolean) => Promise<void>
   browseGamePath: () => Promise<string | null>
   getClientGtaSettings: (id: string) => Promise<GtaSettingsDocument>
   saveClientGtaSettings: (id: string, doc: GtaSettingsDocument) => Promise<void>

@@ -23,6 +23,7 @@ const api = {
   getResolvedGamePath: () => ipcRenderer.invoke('get-resolved-game-path'),
   getAppLogs: () => ipcRenderer.invoke('get-app-logs'),
   clearAppLogs: () => ipcRenderer.invoke('clear-app-logs'),
+  getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
   onAppLog: (callback: (entry: any) => void) => {
     const subscription = (_event: any, entry: any) => callback(entry)
     ipcRenderer.on('app-log', subscription)
@@ -34,6 +35,8 @@ const api = {
   windowClose: () => ipcRenderer.invoke('window-close'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   setGamePath: (gamePath: string) => ipcRenderer.invoke('set-game-path', gamePath),
+  setMinimizeToTrayOnGameLaunch: (enabled: boolean) =>
+    ipcRenderer.invoke('set-minimize-to-tray-on-game-launch', enabled),
   browseGamePath: () => ipcRenderer.invoke('browse-game-path'),
   getClientGtaSettings: (id: string) => ipcRenderer.invoke('get-client-gta-settings', id),
   saveClientGtaSettings: (id: string, doc: unknown) =>

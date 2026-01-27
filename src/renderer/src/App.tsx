@@ -55,6 +55,7 @@ function App(): JSX.Element {
   const [linksOpen, setLinksOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [gamePath, setGamePath] = useState('')
+  const [minimizeToTrayOnGameLaunch, setMinimizeToTrayOnGameLaunch] = useState(false)
   const [gtaSettingsOpen, setGtaSettingsOpen] = useState(false)
   const [gtaSettingsLoading, setGtaSettingsLoading] = useState(false)
   const [gtaSettingsError, setGtaSettingsError] = useState<string | null>(null)
@@ -68,6 +69,14 @@ function App(): JSX.Element {
   const [launchStatusUpdatedAt, setLaunchStatusUpdatedAt] = useState<number>(0)
   const [gameBusyState, setGameBusyState] = useState<GameBusyState>({ pluginsSyncBusy: false })
   const [logs, setLogs] = useState<AppLogEntry[]>([])
+  const [updateStatus, setUpdateStatus] = useState<
+    | {
+        latestVersion: string | null
+        latestUrl: string | null
+        isUpdateAvailable: boolean
+      }
+    | null
+  >(null)
   const launchLogSeq = useRef(0)
   const selectedClientData = clients.find((c) => c.id === selectedClient) || null
 
@@ -92,6 +101,30 @@ function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (!window.api) return
+    let cancelled = false
+
+    const run = async () => {
+      try {
+        const status = await window.api.getUpdateStatus()
+        if (cancelled) return
+        setUpdateStatus({
+          latestVersion: status.latestVersion,
+          latestUrl: status.latestUrl,
+          isUpdateAvailable: Boolean(status.isUpdateAvailable)
+        })
+      } catch {
+        // ignore
+      }
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     const acknowledged = localStorage.getItem('fivelaunch.firstRunAck')
     if (!acknowledged) {
       setFirstRunOpen(true)
@@ -108,6 +141,7 @@ function App(): JSX.Element {
         if (cancelled) return
 
         const saved = (settings.gamePath || '').trim()
+        setMinimizeToTrayOnGameLaunch(Boolean(settings.minimizeToTrayOnGameLaunch))
         if (saved) {
           setGamePath(saved)
           return
@@ -461,6 +495,7 @@ function App(): JSX.Element {
   const handleSaveGamePath = async () => {
     if (!gamePath.trim()) return
     await window.api.setGamePath(gamePath.trim())
+    await window.api.setMinimizeToTrayOnGameLaunch(minimizeToTrayOnGameLaunch)
     setSettingsOpen(false)
   }
 
@@ -752,14 +787,16 @@ function App(): JSX.Element {
               <DialogTrigger asChild>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                      aria-label="Settings"
-                    >
-                      <SettingsIcon className="h-4 w-4" />
-                    </Button>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        aria-label="Settings"
+                      >
+                        <SettingsIcon className="h-4 w-4" />
+                      </Button>
+                    </DialogTrigger>
                   </TooltipTrigger>
                   <TooltipContent>Global settings</TooltipContent>
                 </Tooltip>
@@ -777,6 +814,24 @@ function App(): JSX.Element {
                     value={gamePath}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGamePath(e.target.value)}
                   />
+
+                  <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-primary"
+                      checked={minimizeToTrayOnGameLaunch}
+                      onChange={(e) => setMinimizeToTrayOnGameLaunch(e.target.checked)}
+                    />
+                    <div className="space-y-0.5">
+                      <div className="font-medium text-foreground">
+                        Minimize to system tray on game launch
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        When you launch a client, FiveLaunch will hide to the tray. Click the tray icon to restore.
+                      </div>
+                    </div>
+                  </label>
+
                   <div className="flex flex-wrap gap-2">
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -925,15 +980,17 @@ function App(): JSX.Element {
             </div>
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DialogTrigger asChild>
                       <Button size="sm" aria-label="Create client">
                         <Plus className="h-4 w-4" />
                         New Client
                       </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Create a new client profile</TooltipContent>
-                  </Tooltip>
+                    </DialogTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>Create a new client profile</TooltipContent>
+                </Tooltip>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
@@ -1425,6 +1482,20 @@ function App(): JSX.Element {
             <a href={repoUrl} target="_blank" rel="noreferrer" className="hover:text-foreground">
               Open Source
             </a>
+            {updateStatus?.isUpdateAvailable && updateStatus.latestUrl && (
+              <button
+                type="button"
+                className="font-medium text-primary hover:underline"
+                onClick={() => window.open(updateStatus.latestUrl!, '_blank', 'noopener,noreferrer')}
+                title={
+                  updateStatus.latestVersion
+                    ? `Update available: v${updateStatus.latestVersion}`
+                    : 'Update available'
+                }
+              >
+                Update available{updateStatus.latestVersion ? ` (v${updateStatus.latestVersion})` : ''}
+              </button>
+            )}
             <a
               href="https://fivelaunch.help/support"
               target="_blank"

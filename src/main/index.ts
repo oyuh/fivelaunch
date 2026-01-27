@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron'
 import { join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { format as formatUtil } from 'util'
@@ -9,6 +9,7 @@ import type { GameManager } from './managers/GameManager'
 import type { SettingsManager } from './managers/SettingsManager'
 import type { GtaSettingsManager } from './managers/GtaSettingsManager'
 import { getCitizenFxDir, getFiveMPath } from './utils/paths'
+import { checkForUpdatesOnGitHub, type UpdateStatus } from './utils/updateChecker'
 
 const startupTimingEnabled =
   process.env['FIVELAUNCH_STARTUP_TIMING'] === '1' || process.env['STARTUP_TIMING'] === '1'
@@ -48,6 +49,71 @@ const APP_LOG_BUFFER_LIMIT = 800
 const appLogBuffer: AppLogEntry[] = []
 let appLogSeq = 0
 let mainWindowRef: BrowserWindow | null = null
+let trayRef: Tray | null = null
+let isQuitting = false
+
+let updateStatusCache: { ts: number; value: UpdateStatus } | null = null
+const UPDATE_CACHE_TTL_MS = 15 * 60 * 1000
+const GITHUB_REPO = 'oyuh/fivelaunch'
+
+const ensureTray = (): Tray => {
+  if (trayRef) return trayRef
+
+  const iconPath = getAppIconPath()
+  const img = nativeImage.createFromPath(iconPath)
+  const tray = new Tray(img.isEmpty() ? iconPath : img)
+
+  tray.setToolTip('FiveLaunch')
+
+  tray.on('click', () => {
+    const win = mainWindowRef
+    if (!win || win.isDestroyed()) return
+    win.setSkipTaskbar(false)
+    win.show()
+    win.focus()
+  })
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: 'Show FiveLaunch',
+      click: () => {
+        const win = mainWindowRef
+        if (!win || win.isDestroyed()) return
+        win.setSkipTaskbar(false)
+        win.show()
+        win.focus()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+  tray.setContextMenu(menu)
+
+  trayRef = tray
+  return tray
+}
+
+const minimizeToTray = (): void => {
+  ensureTray()
+  const win = mainWindowRef
+  if (!win || win.isDestroyed()) return
+  win.hide()
+  win.setSkipTaskbar(true)
+}
+
+const restoreFromTray = (): void => {
+  const win = mainWindowRef
+  if (!win || win.isDestroyed()) return
+  win.setSkipTaskbar(false)
+  win.show()
+  win.focus()
+}
 
 const pushAppLog = (level: AppLogLevel, args: unknown[]): void => {
   const message = formatUtil(...(args as any[]))
@@ -361,6 +427,27 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  // Ensure `mainWindowRef` is available even before app.whenReady finishes wiring.
+  mainWindowRef = mainWindow
+
+  // If the user minimizes the window via OS controls/taskbar, optionally route it to tray.
+  mainWindow.on('minimize', (event) => {
+    void (async () => {
+      try {
+        const settings = (await getSettingsManager()).getSettings()
+        if (!settings.minimizeToTrayOnGameLaunch) return
+
+        // Some Electron events support preventDefault; guard in case it doesn't.
+        ;(event as any)?.preventDefault?.()
+        ensureTray()
+        mainWindow.hide()
+        mainWindow.setSkipTaskbar(true)
+      } catch {
+        // ignore
+      }
+    })()
+  })
+
   const showMainAndCloseSplash = () => {
     if (!mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show()
@@ -384,6 +471,12 @@ function createWindow(): BrowserWindow {
     if (!splashWindow.isDestroyed()) {
       splashWindow.close()
     }
+  })
+
+  mainWindow.on('close', () => {
+    // Intentionally left as normal close behavior.
+    // Tray mode is only triggered on game launch; Quit is handled via the tray menu.
+    if (isQuitting) return
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -483,6 +576,18 @@ app.whenReady().then(() => {
     return (await getSettingsManager()).getSettings()
   })
 
+  ipcMain.handle('get-update-status', async () => {
+    const now = Date.now()
+    if (updateStatusCache && now - updateStatusCache.ts < UPDATE_CACHE_TTL_MS) {
+      return updateStatusCache.value
+    }
+
+    const currentVersion = app.getVersion()
+    const status = await checkForUpdatesOnGitHub({ repo: GITHUB_REPO, currentVersion })
+    updateStatusCache = { ts: now, value: status }
+    return status
+  })
+
   ipcMain.handle('get-resolved-game-path', async () => {
     return getFiveMPath()
   })
@@ -501,6 +606,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('set-game-path', async (_event, gamePath: string) => {
     ;(await getSettingsManager()).setGamePath(gamePath)
+  })
+
+  ipcMain.handle('set-minimize-to-tray-on-game-launch', async (_event, enabled: boolean) => {
+    ;(await getSettingsManager()).setMinimizeToTrayOnGameLaunch(Boolean(enabled))
   })
 
   ipcMain.handle('browse-game-path', async () => {
@@ -528,9 +637,19 @@ app.whenReady().then(() => {
     return (await getGtaSettingsManager()).importFromTemplate(id)
   })
 
-  ipcMain.handle('window-minimize', (event) => {
+  ipcMain.handle('window-minimize', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    win?.minimize()
+    if (!win) return
+
+    const settings = (await getSettingsManager()).getSettings()
+    if (settings.minimizeToTrayOnGameLaunch) {
+      ensureTray()
+      win.hide()
+      win.setSkipTaskbar(true)
+      return
+    }
+
+    win.minimize()
   })
 
   ipcMain.handle('window-toggle-maximize', (event) => {
@@ -550,6 +669,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('launch-client', async (event, id: string) => {
     try {
+      const settings = (await getSettingsManager()).getSettings()
+      if (settings.minimizeToTrayOnGameLaunch) {
+        minimizeToTray()
+      }
+
       const cm = await getClientManager()
       const gm = await getGameManager()
       const client = cm.getClient(id)
@@ -564,6 +688,7 @@ app.whenReady().then(() => {
       return { success: true }
     } catch (error) {
       console.error('Launch error:', error)
+      restoreFromTray()
       return { success: false, error: (error as Error).message }
     }
   })

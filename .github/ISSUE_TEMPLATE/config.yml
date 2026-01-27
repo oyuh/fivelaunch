@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: FiveLaunch Documentation
+    url: https://github.com/oyuh/fivelaunch/blob/main/docs/README.md
+    about: Settings, backups, plugins, and GitHub contribution guides.
+  - name: FiveLaunch Support
+    url: https://fivelaunch.help/support
+    about: Official support page.
