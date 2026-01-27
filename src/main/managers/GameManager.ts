@@ -21,6 +21,12 @@ export class GameManager {
 
   private pluginsMirrorCache: Map<string, Map<string, number>> = new Map()
 
+  public getBusyState(): { pluginsSyncBusy: boolean } {
+    return {
+      pluginsSyncBusy: Boolean(this.pendingPluginsFinalization)
+    }
+  }
+
   private registerInterval(interval: NodeJS.Timeout): NodeJS.Timeout {
     this.activeIntervals.push(interval)
     interval.unref?.()
@@ -170,6 +176,81 @@ export class GameManager {
 
   private pluginsOwnerMarkerPath(dir: string): string {
     return path.join(dir, '.fivelaunch-plugins-owner.json')
+  }
+
+  private getManagedMarkerFile(dir: string): string {
+    return path.join(dir, '.managed-by-fivem-clients')
+  }
+
+  private prepareGamePluginsDirForSyncMode(
+    gamePluginsDir: string,
+    clientId: string,
+    statusCallback?: (status: string) => void
+  ): void {
+    const markerFile = this.getManagedMarkerFile(gamePluginsDir)
+
+    if (fs.existsSync(gamePluginsDir)) {
+      let stats: fs.Stats
+      try {
+        stats = fs.lstatSync(gamePluginsDir)
+      } catch {
+        stats = null as unknown as fs.Stats
+      }
+
+      if (stats) {
+        if (stats.isSymbolicLink()) {
+          // Previous run might have left this as a junction (junction mode). Remove it.
+          try {
+            fs.unlinkSync(gamePluginsDir)
+          } catch {
+            // ignore
+          }
+        } else if (stats.isDirectory()) {
+          const managed = fs.existsSync(markerFile)
+          const owner = this.readPluginsOwnerMarker(gamePluginsDir)
+          const ownerId = owner?.clientId
+
+          // If this folder isn't ours, or it was owned by another client, rotate it away.
+          // This prevents cross-client plugin leakage in sync mode.
+          if (!managed || !ownerId || ownerId !== clientId) {
+            const ownerTag = ownerId ? this.fnv1a32Hex(ownerId) : 'unknown'
+            const kind = managed ? `managed_${ownerTag}` : 'unmanaged'
+            const backupPath = `${gamePluginsDir}_${kind}_backup_${Date.now()}`
+
+            statusCallback?.('Isolating FiveM plugins folder for this client...')
+            try {
+              this.renameWithRetrySync(gamePluginsDir, backupPath)
+            } catch (err) {
+              const code = (err as NodeJS.ErrnoException)?.code
+              throw new Error(
+                `Failed to isolate plugins folder (code=${code ?? 'unknown'}): ${gamePluginsDir}. Close FiveM/overlays and try again.`
+              )
+            }
+          }
+        } else {
+          // Unexpected file at plugins path; move it aside.
+          try {
+            fs.renameSync(gamePluginsDir, `${gamePluginsDir}_backup_${Date.now()}`)
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    try {
+      fs.mkdirSync(gamePluginsDir, { recursive: true })
+    } catch {
+      // ignore
+    }
+    try {
+      fs.writeFileSync(markerFile, `managed\n`, 'utf8')
+    } catch {
+      // ignore
+    }
+
+    // Always stamp ownership for debugging + correctness.
+    this.writePluginsOwnerMarker(gamePluginsDir, { clientId, mode: 'sync' })
   }
 
   private writePluginsOwnerMarker(dir: string, payload: { clientId: string; mode: 'sync' | 'junction' }): void {
@@ -522,47 +603,6 @@ export class GameManager {
     this.lastWriteMs = {}
   }
 
-  private ensureRealDirectory(target: string, options?: { backupSuffix?: string }) {
-    const backupSuffix = options?.backupSuffix ?? '_original'
-    const markerFile = path.join(target, '.managed-by-fivem-clients')
-
-    if (fs.existsSync(target)) {
-      const stats = fs.lstatSync(target)
-
-      if (stats.isSymbolicLink()) {
-        // A junction/symlink: remove it so we can create a real directory.
-        try {
-          fs.unlinkSync(target)
-        } catch {
-          // ignore
-        }
-      } else if (stats.isDirectory()) {
-        // If we've already taken over this directory, keep it as-is.
-        // Keep existing real directory in place.
-        // Copy/Sync mode should be non-destructive to avoid failures on locked/permissioned folders.
-        if (fs.existsSync(markerFile)) return
-      } else {
-        // Unexpected file type at directory path.
-        try {
-          fs.renameSync(target, `${target}${backupSuffix}_${Date.now()}`)
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    try {
-      fs.mkdirSync(target, { recursive: true })
-    } catch {
-      // ignore
-    }
-    try {
-      fs.writeFileSync(markerFile, `managed\n`, 'utf8')
-    } catch {
-      // ignore
-    }
-  }
-
   private *listFilesRecursive(
     baseDir: string,
     options?: {
@@ -754,6 +794,84 @@ export class GameManager {
             options?.cacheSetMtime?.(rel, fromTime)
             skipped += 1
           }
+        }
+      }
+
+      processed += 1
+      if (processed % yieldEvery === 0) {
+        options?.onProgress?.({ processed, copied, skipped })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+    }
+
+    options?.onProgress?.({ processed, copied, skipped })
+  }
+
+  private async mirrorFolderSourceWinsOneWayAsync(
+    sourceDir: string,
+    targetDir: string,
+    options?: {
+      filterRel?: (relPath: string) => boolean
+      skipDirRel?: (relDir: string) => boolean
+      yieldEvery?: number
+      maxFiles?: number
+      timeBudgetMs?: number
+      cacheGetMtime?: (relPath: string) => number | undefined
+      cacheSetMtime?: (relPath: string, mtimeMs: number) => void
+      onProgress?: (p: { processed: number; copied: number; skipped: number }) => void
+    }
+  ): Promise<void> {
+    try {
+      fs.mkdirSync(sourceDir, { recursive: true })
+      fs.mkdirSync(targetDir, { recursive: true })
+    } catch {
+      // ignore
+    }
+
+    const yieldEvery = options?.yieldEvery ?? 250
+    let processed = 0
+    let copied = 0
+    let skipped = 0
+
+    const startedAt = Date.now()
+    const skewMs = 900
+
+    for await (const rel of this.listFilesRecursiveAsync(sourceDir, {
+      filterRel: options?.filterRel,
+      skipDirRel: options?.skipDirRel,
+      maxFiles: options?.maxFiles
+    })) {
+      if (options?.timeBudgetMs && Date.now() - startedAt > options.timeBudgetMs) {
+        options?.onProgress?.({ processed, copied, skipped })
+        break
+      }
+
+      const from = path.join(sourceDir, rel)
+      const to = path.join(targetDir, rel)
+
+      try {
+        fs.mkdirSync(path.dirname(to), { recursive: true })
+      } catch {
+        // ignore
+      }
+
+      const fromTime = this.getMtimeMsSafe(from)
+      const cached = options?.cacheGetMtime?.(rel)
+      const toExists = fs.existsSync(to)
+
+      // Source-authoritative mirror:
+      // - If source file didn't change since last time (cache hit), skip.
+      // - Otherwise, copy from source to target (even if target is newer).
+      if (toExists && typeof cached === 'number' && Math.abs(cached - fromTime) <= skewMs) {
+        skipped += 1
+      } else {
+        const ok = await this.copyFileBestEffortAsync(from, to)
+        if (ok) {
+          options?.cacheSetMtime?.(rel, fromTime)
+          copied += 1
+        } else {
+          // If copy failed (locked), don't poison the cache.
+          skipped += 1
         }
       }
 
@@ -1250,6 +1368,12 @@ export class GameManager {
         const clientPluginsDir = path.join(clientPath, 'plugins')
         const gamePluginsDir = path.join(fiveMPath, 'plugins')
 
+        try {
+          console.log(`[Launch] clientId=${clientId} pluginsMode=${pluginsMode} clientPluginsDir=${clientPluginsDir} gamePluginsDir=${gamePluginsDir}`)
+        } catch {
+          // ignore
+        }
+
         if (pluginsMode === 'sync') {
           statusCallback?.('Syncing plugins (copy mode)...')
 
@@ -1295,14 +1419,10 @@ export class GameManager {
           // It can be huge and will freeze the launcher (sync IO on main thread).
           // Copy/Sync mode is non-destructive and doesn't delete game-side files anyway.
 
-          step('ensure real game plugins directory', () => {
-            this.ensureRealDirectory(gamePluginsDir, { backupSuffix: '_original' })
-          })
-
-          // Mark the real plugins folder as owned by this client in Copy/Sync mode.
-          // This prevents junction-mode migration from copying another client's plugins.
-          step('mark plugins owner', () => {
-            this.writePluginsOwnerMarker(gamePluginsDir, { clientId, mode: 'sync' })
+          // Ensure FiveM.app\plugins is isolated per client in sync mode.
+          // If it was previously managed by another client (or was unmanaged), rotate it away.
+          step('prepare isolated game plugins directory', () => {
+            this.prepareGamePluginsDirForSyncMode(gamePluginsDir, clientId, statusCallback)
           })
 
           // Seed from client -> game so the per-client folder wins at launch.
@@ -1313,7 +1433,7 @@ export class GameManager {
             const cachePath = this.getPluginsMirrorCacheFile(clientPath, 'client->game')
             const cache = this.loadPluginsMirrorCache(this.getPluginsMirrorCacheKey(clientId, 'client->game'), cachePath)
             let lastProgressAt = 0
-            await this.mirrorFolderPreferNewestOneWayAsync(clientPluginsDir, gamePluginsDir, {
+            await this.mirrorFolderSourceWinsOneWayAsync(clientPluginsDir, gamePluginsDir, {
               yieldEvery: 250,
               onProgress: ({ processed, copied }) => {
                 const now = Date.now()
@@ -1322,7 +1442,7 @@ export class GameManager {
                 statusCallback?.(`Syncing plugins (copy mode)... ${processed} scanned, ${copied} updated`)
               },
               // Cache optimization: if a file's source mtime hasn't changed since last launch and the target exists,
-              // skip touching the target entirely (saves a lot of stat calls and speeds repeat launches).
+              // skip touching the target entirely (saves a lot of IO on repeat launches).
               cacheGetMtime: (rel) => cache.get(rel),
               cacheSetMtime: (rel, mtime) => cache.set(rel, mtime)
             })
@@ -1387,7 +1507,14 @@ export class GameManager {
                     }
                   )
 
-                  this.pendingPluginsFinalization = finalizePromise
+                  // Mark busy while the final sync is running, but clear automatically when done.
+                  let tracked: Promise<void>
+                  tracked = finalizePromise.finally(() => {
+                    if (this.pendingPluginsFinalization === tracked) {
+                      this.pendingPluginsFinalization = null
+                    }
+                  })
+                  this.pendingPluginsFinalization = tracked
                 }
               } catch (err) {
                 try {
@@ -1409,6 +1536,13 @@ export class GameManager {
             const clientPluginsReal = fs.realpathSync.native
               ? fs.realpathSync.native(clientPluginsDir)
               : fs.realpathSync(clientPluginsDir)
+
+            const owner = this.readPluginsOwnerMarker(gamePluginsDir)
+            this.reshadeLog(
+              reshadeClientDir,
+              `Plugins owner marker (game plugins): ${JSON.stringify(owner)}`,
+              statusCallback
+            )
             this.reshadeLog(
               reshadeClientDir,
               `Plugins mode=sync: game=${gamePluginsDir} -> real=${gamePluginsReal}; client=${clientPluginsDir} -> real=${clientPluginsReal}`,

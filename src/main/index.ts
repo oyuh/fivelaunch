@@ -1,6 +1,8 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, resolve } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { format as formatUtil } from 'util'
+import fs from 'fs'
 // import icon from '../../resources/icon.png?asset'
 import type { ClientManager } from './managers/ClientManager'
 import type { GameManager } from './managers/GameManager'
@@ -12,11 +14,89 @@ const startupTimingEnabled =
   process.env['FIVELAUNCH_STARTUP_TIMING'] === '1' || process.env['STARTUP_TIMING'] === '1'
 
 const startupT0 = Date.now()
+let splashWindowRef: BrowserWindow | null = null
+
+const setSplashStatus = (text: string): void => {
+  try {
+    if (!splashWindowRef || splashWindowRef.isDestroyed()) return
+    const safe = JSON.stringify(String(text))
+    splashWindowRef.webContents.executeJavaScript(
+      `window.__setStatus && window.__setStatus(${safe});`,
+      true
+    )
+  } catch {
+    // ignore
+  }
+}
+
 const startupMark = (label: string) => {
+  setSplashStatus(label)
   if (!startupTimingEnabled) return
   const ms = Date.now() - startupT0
   console.log(`[startup +${ms}ms] ${label}`)
 }
+
+type AppLogLevel = 'debug' | 'info' | 'warn' | 'error'
+type AppLogEntry = {
+  id: number
+  ts: number
+  level: AppLogLevel
+  message: string
+}
+
+const APP_LOG_BUFFER_LIMIT = 800
+const appLogBuffer: AppLogEntry[] = []
+let appLogSeq = 0
+let mainWindowRef: BrowserWindow | null = null
+
+const pushAppLog = (level: AppLogLevel, args: unknown[]): void => {
+  const message = formatUtil(...(args as any[]))
+  const entry: AppLogEntry = {
+    id: (appLogSeq += 1),
+    ts: Date.now(),
+    level,
+    message
+  }
+
+  appLogBuffer.push(entry)
+  if (appLogBuffer.length > APP_LOG_BUFFER_LIMIT) {
+    appLogBuffer.splice(0, appLogBuffer.length - APP_LOG_BUFFER_LIMIT)
+  }
+
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send('app-log', entry)
+  }
+}
+
+// Mirror main-process console output into a buffer so the UI can show it.
+// Keep this lightweight and non-throwing.
+const installConsoleLogMirror = (): void => {
+  const original = {
+    log: console.log.bind(console),
+    info: console.info.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console)
+  }
+
+  console.log = (...args: unknown[]) => {
+    original.log(...args)
+    pushAppLog('info', args)
+  }
+  console.info = (...args: unknown[]) => {
+    original.info(...args)
+    pushAppLog('info', args)
+  }
+  console.warn = (...args: unknown[]) => {
+    original.warn(...args)
+    pushAppLog('warn', args)
+  }
+  console.error = (...args: unknown[]) => {
+    original.error(...args)
+    pushAppLog('error', args)
+  }
+}
+
+installConsoleLogMirror()
 
 let clientManager: ClientManager | null = null
 let gameManager: GameManager | null = null
@@ -65,6 +145,20 @@ const getAppIconPath = (): string => {
     : join(process.resourcesPath, 'resources', 'Logo-Full.ico')
 }
 
+const getSplashLogoDataUrl = (): string | null => {
+  const logoPath = is.dev
+    ? resolve(process.cwd(), 'resources', 'Logo.png')
+    : join(process.resourcesPath, 'resources', 'Logo.png')
+
+  try {
+    if (!fs.existsSync(logoPath)) return null
+    const buf = fs.readFileSync(logoPath)
+    return `data:image/png;base64,${buf.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
 const sanitizeWindowsFileName = (name: string): string => {
   const sanitized = name.replace(/[<>:"/\\|?*]+/g, '-').replace(/\s+/g, ' ').trim()
   return sanitized.length > 0 ? sanitized : 'shortcut'
@@ -87,6 +181,7 @@ const getLaunchClientArg = (argv: string[]): string | null => {
 
 function createWindow(): BrowserWindow {
   const appIcon = getAppIconPath()
+  const splashLogo = getSplashLogoDataUrl()
 
   const splashWindow = new BrowserWindow({
     width: 420,
@@ -102,6 +197,8 @@ function createWindow(): BrowserWindow {
       sandbox: false
     }
   })
+
+  splashWindowRef = splashWindow
 
   const splashHtml = `
     <!doctype html>
@@ -131,7 +228,7 @@ function createWindow(): BrowserWindow {
           .panel {
             width: 100%;
             height: 100%;
-            background: rgba(16, 16, 20, 0.92);
+            background: rgba(12, 12, 16, 0.92);
             border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 16px;
             box-shadow: 0 20px 80px rgba(0,0,0,0.45);
@@ -143,29 +240,53 @@ function createWindow(): BrowserWindow {
             position: relative;
             -webkit-app-region: drag;
           }
-          .glow {
-            position: absolute;
-            inset: -30px;
-            background: radial-gradient(closest-side, rgba(99,102,241,0.16), transparent 60%);
-            pointer-events: none;
+          .logo {
+            width: 86px;
+            height: 86px;
+            border-radius: 18px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.10);
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            box-shadow: 0 14px 40px rgba(0,0,0,0.35);
           }
-          .title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.92); letter-spacing: 0.2px; }
-          .sub { font-size: 12px; color: rgba(255,255,255,0.58); }
-          .row { display: flex; align-items: center; gap: 10px; }
-          .brand {
+          .logo img {
+            width: 72px;
+            height: 72px;
+            object-fit: contain;
+            filter: drop-shadow(0 10px 18px rgba(0,0,0,0.35));
+          }
+          .brandTitle {
+            margin-top: 2px;
+            font-size: 16px;
+            font-weight: 800;
+            color: rgba(255,255,255,0.92);
+            letter-spacing: 0.2px;
+            text-align: center;
+          }
+          .statusBox {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.10);
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            gap: 12px;
+            gap: 10px;
           }
-          .pill {
-            font-size: 11px;
-            padding: 4px 8px;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.10);
-            color: rgba(255,255,255,0.65);
-            letter-spacing: 0.2px;
+          .statusLabel {
+            font-size: 12px;
+            color: rgba(255,255,255,0.72);
+            white-space: nowrap;
+          }
+          .statusText {
+            font-size: 12px;
+            color: rgba(255,255,255,0.58);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
           }
           .spinner {
             width: 16px;
@@ -181,22 +302,49 @@ function createWindow(): BrowserWindow {
       <body>
         <div class="card">
           <div class="panel">
-            <div class="glow"></div>
-            <div class="brand">
-              <div class="title">FiveLaunch</div>
-              <div class="pill">Starting…</div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap: 12px;">
+              <div class="logo">
+                ${splashLogo ? `<img src="${splashLogo}" alt="FiveLaunch" />` : `<div style="font-weight:800;color:rgba(255,255,255,0.85);">FL</div>`}
+              </div>
+              <div class="brandTitle">FiveLaunch</div>
             </div>
-            <div class="row">
+
+            <div class="statusBox" style="margin-top: 2px;">
               <div class="spinner" aria-label="Loading"></div>
-              <div class="sub">Warming up the UI</div>
+              <div class="statusLabel">Status</div>
+              <div id="status" class="statusText">Starting…</div>
             </div>
           </div>
         </div>
+
+        <script>
+          (function () {
+            var el = document.getElementById('status');
+            var messages = [
+              'Starting…',
+              'Loading renderer…',
+              'Warming up…',
+              'Almost there…'
+            ];
+            var i = 0;
+            window.__setStatus = function (text) {
+              if (!el) return;
+              el.textContent = String(text || '');
+            };
+            setInterval(function () {
+              if (!el) return;
+              if (el.textContent && el.textContent !== 'Starting…') return;
+              i = (i + 1) % messages.length;
+              el.textContent = messages[i];
+            }, 750);
+          })();
+        </script>
       </body>
     </html>
   `
 
   splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml)}`)
+  setSplashStatus('Starting…')
 
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -220,10 +368,12 @@ function createWindow(): BrowserWindow {
     if (!splashWindow.isDestroyed()) {
       splashWindow.close()
     }
+    splashWindowRef = null
   }
 
   // `ready-to-show` can be delayed a lot on some machines/builds.
   // Prefer showing as soon as the renderer has loaded, with a fallback timeout.
+  setSplashStatus('Loading UI…')
   mainWindow.webContents.once('did-finish-load', showMainAndCloseSplash)
   mainWindow.once('ready-to-show', showMainAndCloseSplash)
 
@@ -267,6 +417,7 @@ app.whenReady().then(() => {
 
   // Create the window ASAP; managers are loaded lazily via IPC handlers.
   const mainWindow = createWindow()
+  mainWindowRef = mainWindow
   startupMark('createWindow() called')
 
   // IPC Handlers
@@ -330,6 +481,22 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-settings', async () => {
     return (await getSettingsManager()).getSettings()
+  })
+
+  ipcMain.handle('get-resolved-game-path', async () => {
+    return getFiveMPath()
+  })
+
+  ipcMain.handle('get-app-logs', async () => {
+    return appLogBuffer
+  })
+
+  ipcMain.handle('clear-app-logs', async () => {
+    appLogBuffer.length = 0
+  })
+
+  ipcMain.handle('get-game-busy-state', async () => {
+    return (await getGameManager()).getBusyState()
   })
 
   ipcMain.handle('set-game-path', async (_event, gamePath: string) => {

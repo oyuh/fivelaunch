@@ -20,6 +20,15 @@ const api = {
     ipcRenderer.on('launch-status', subscription)
     return () => ipcRenderer.removeListener('launch-status', subscription)
   },
+  getResolvedGamePath: () => ipcRenderer.invoke('get-resolved-game-path'),
+  getAppLogs: () => ipcRenderer.invoke('get-app-logs'),
+  clearAppLogs: () => ipcRenderer.invoke('clear-app-logs'),
+  onAppLog: (callback: (entry: any) => void) => {
+    const subscription = (_event: any, entry: any) => callback(entry)
+    ipcRenderer.on('app-log', subscription)
+    return () => ipcRenderer.removeListener('app-log', subscription)
+  },
+  getGameBusyState: () => ipcRenderer.invoke('get-game-busy-state'),
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowToggleMaximize: () => ipcRenderer.invoke('window-toggle-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),

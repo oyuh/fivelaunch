@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
   Card,
   CardContent,
@@ -16,9 +17,30 @@ import {
   DialogTitle,
   DialogTrigger
 } from '@/components/ui/dialog'
-import type { ClientProfile, LinkOptions, GtaSettingsItem, ClientStats } from '@/types'
+import {
+  Settings as SettingsIcon,
+  Plus,
+  Play,
+  Info,
+  Link2,
+  Wrench,
+  FolderOpen,
+  Save,
+  Minus,
+  Square,
+  X
+} from 'lucide-react'
+import type {
+  ClientProfile,
+  LinkOptions,
+  GtaSettingsItem,
+  ClientStats,
+  AppLogEntry,
+  GameBusyState
+} from '@/types'
 import { getSettingDefinition, SETTING_CATEGORIES, type SettingOption } from '@shared/gtaSettingsMap'
 import appLogo from '../../../resources/Logo.png'
+import { LogsPanel } from '@/components/LogsPanel'
 
 function App(): JSX.Element {
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
@@ -44,7 +66,19 @@ function App(): JSX.Element {
   const [launchStatus, setLaunchStatus] = useState<string | null>(null)
   const [isLaunching, setIsLaunching] = useState(false)
   const [launchStatusUpdatedAt, setLaunchStatusUpdatedAt] = useState<number>(0)
+  const [gameBusyState, setGameBusyState] = useState<GameBusyState>({ pluginsSyncBusy: false })
+  const [logs, setLogs] = useState<AppLogEntry[]>([])
+  const launchLogSeq = useRef(0)
   const selectedClientData = clients.find((c) => c.id === selectedClient) || null
+
+  const appendLog = (entry: AppLogEntry) => {
+    setLogs((prev) => {
+      const next = [...prev, entry]
+      // Keep memory bounded.
+      if (next.length > 900) return next.slice(next.length - 900)
+      return next
+    })
+  }
 
   const filteredClients = useMemo(() => {
     const q = clientQuery.trim().toLowerCase()
@@ -66,9 +100,33 @@ function App(): JSX.Element {
 
   useEffect(() => {
     if (!window.api) return
-    window.api.getSettings().then((settings) => {
-      setGamePath(settings.gamePath || '')
-    })
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const settings = await window.api.getSettings()
+        if (cancelled) return
+
+        const saved = (settings.gamePath || '').trim()
+        if (saved) {
+          setGamePath(saved)
+          return
+        }
+
+        // If the user hasn't saved a path yet, try to auto-detect it.
+        const resolved = await window.api.getResolvedGamePath()
+        if (cancelled) return
+        if (resolved) setGamePath(resolved)
+      } catch {
+        // ignore
+      }
+    }
+
+    void load()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -98,6 +156,17 @@ function App(): JSX.Element {
     const unsubscribe = window.api.onLaunchStatus((status: string) => {
       setLaunchStatus(status)
       setLaunchStatusUpdatedAt(Date.now())
+
+       const level = status.startsWith('Error:') ? 'error' : /Waiting for plugins sync/i.test(status) ? 'warn' : 'info'
+       launchLogSeq.current += 1
+       appendLog({
+         id: launchLogSeq.current,
+         ts: Date.now(),
+         level,
+         message: status,
+         source: 'launch'
+       })
+
       if (status === 'Launched!') {
         setTimeout(() => {
           setLaunchStatus(null)
@@ -106,6 +175,61 @@ function App(): JSX.Element {
       }
     })
     return () => unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!window.api) return
+
+    let cancelled = false
+
+    const loadInitial = async () => {
+      try {
+        const initial = await window.api.getAppLogs()
+        if (cancelled) return
+        setLogs((prev) => {
+          // Preserve any launch logs that might have arrived already.
+          const launchOnly = prev.filter((l) => l.source === 'launch')
+          const mainLogs: AppLogEntry[] = initial.map((l) => ({ ...l, source: 'main' }))
+          const merged = [...mainLogs, ...launchOnly]
+          return merged.slice(Math.max(0, merged.length - 900))
+        })
+      } catch {
+        // ignore
+      }
+    }
+
+    loadInitial()
+
+    const unsubscribe = window.api.onAppLog((entry) => {
+      if (cancelled) return
+      appendLog({ ...entry, source: 'main' })
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!window.api) return
+    let cancelled = false
+
+    const tick = async () => {
+      try {
+        const state = await window.api.getGameBusyState()
+        if (!cancelled) setGameBusyState(state)
+      } catch {
+        // ignore
+      }
+    }
+
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [])
 
   // Watchdog: never leave the UI in a "launching" state indefinitely.
@@ -161,7 +285,7 @@ function App(): JSX.Element {
     const isDone = launchStatus === 'Launched!'
 
     return (
-      <div className="mt-2 w-full max-w-xl rounded-lg border border-border bg-card/60 px-3 py-2 backdrop-blur">
+      <div className="mt-2 w-full rounded-lg border border-border bg-card/60 px-3 py-2 backdrop-blur">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -298,6 +422,16 @@ function App(): JSX.Element {
         setIsLaunching(false)
       }, 3000)
     }
+  }
+
+  const clearAllLogs = async () => {
+    try {
+      await window.api.clearAppLogs()
+    } catch {
+      // ignore
+    }
+    setLogs([])
+    launchLogSeq.current = 0
   }
 
   const handleOpenFolder = async () => {
@@ -575,6 +709,18 @@ function App(): JSX.Element {
   const commitInfo = __COMMIT_INFO__
   const repoUrl = __REPO_URL__
 
+  const launchDisabledReason = !selectedClientData
+    ? 'Select a client to launch'
+    : !gamePath.trim()
+      ? 'Set your FiveM.app path in Settings first'
+      : gameBusyState.pluginsSyncBusy
+        ? 'Finishing previous plugins sync'
+        : isLaunching
+          ? 'Launch already in progress'
+          : null
+
+  const canLaunch = Boolean(selectedClientData) && Boolean(gamePath.trim()) && !gameBusyState.pluginsSyncBusy && !isLaunching
+
   if (!window.api) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-6">
@@ -590,80 +736,116 @@ function App(): JSX.Element {
   }
 
   return (
-    <div className="min-h-screen w-full bg-background">
-      <div className="titlebar fixed left-0 top-0 z-50 flex h-12 w-full items-center justify-between border-b border-border bg-card px-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <img
-            src={appLogo}
-            alt="FiveLaunch"
-            className="h-5 w-auto opacity-90 brightness-0 invert"
-          />
-          <span>FiveLaunch</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-            <DialogTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                aria-label="Settings"
-              >
-                ⚙
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Global Settings</DialogTitle>
-                <DialogDescription>
-                  Set the default FiveM game data location (FiveM.app).
-                </DialogDescription>
-              </DialogHeader>
-              <div className="mt-4 space-y-3">
-                <Input
-                  placeholder="C:\\Users\\...\\AppData\\Local\\FiveM\\FiveM.app"
-                  value={gamePath}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGamePath(e.target.value)}
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={handleBrowseGamePath}>
-                    Browse
-                  </Button>
-                  <Button onClick={handleSaveGamePath} disabled={!gamePath.trim()}>
-                    Save
-                  </Button>
+    <TooltipProvider delayDuration={250}>
+      <div className="min-h-screen w-full bg-background">
+        <div className="titlebar fixed left-0 top-0 z-50 flex h-12 w-full items-center justify-between border-b border-border bg-card px-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <img
+              src={appLogo}
+              alt="FiveLaunch"
+              className="h-5 w-auto opacity-90 brightness-0 invert"
+            />
+            <span>FiveLaunch</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+              <DialogTrigger asChild>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                      aria-label="Settings"
+                    >
+                      <SettingsIcon className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Global settings</TooltipContent>
+                </Tooltip>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Global Settings</DialogTitle>
+                  <DialogDescription>
+                    Set the default FiveM game data location (FiveM.app).
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="mt-4 space-y-3">
+                  <Input
+                    placeholder="C:\\Users\\...\\AppData\\Local\\FiveM\\FiveM.app"
+                    value={gamePath}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGamePath(e.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="secondary" onClick={handleBrowseGamePath}>
+                          <FolderOpen className="h-4 w-4" />
+                          Browse
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Pick your FiveM.app folder</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button onClick={handleSaveGamePath} disabled={!gamePath.trim()}>
+                          <Save className="h-4 w-4" />
+                          Save
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Save the global FiveM.app path</TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-            onClick={() => window.api.windowMinimize()}
-          >
-            —
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-            onClick={() => window.api.windowToggleMaximize()}
-          >
-            □
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-            onClick={() => window.api.windowClose()}
-          >
-            ✕
-          </Button>
+              </DialogContent>
+            </Dialog>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  onClick={() => window.api.windowMinimize()}
+                  aria-label="Minimize"
+                >
+                  <Minus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Minimize</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  onClick={() => window.api.windowToggleMaximize()}
+                  aria-label="Maximize"
+                >
+                  <Square className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Maximize</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  onClick={() => window.api.windowClose()}
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Close</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
-      </div>
 
-      <div className="flex min-h-screen flex-col pt-12">
+        <div className="flex min-h-screen flex-col pt-12">
         <Dialog
           open={firstRunOpen}
           onOpenChange={(open) => {
@@ -706,12 +888,24 @@ function App(): JSX.Element {
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => window.api.openCitizenFxFolder()}>
-                    Open CitizenFX Folder
-                  </Button>
-                  <Button variant="secondary" onClick={() => window.api.openFiveMFolder()}>
-                    Open FiveM Folder
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="secondary" onClick={() => window.api.openCitizenFxFolder()}>
+                        <FolderOpen className="h-4 w-4" />
+                        Open CitizenFX Folder
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Opens %APPDATA%\\CitizenFX</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="secondary" onClick={() => window.api.openFiveMFolder()}>
+                        <FolderOpen className="h-4 w-4" />
+                        Open FiveM Folder
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Opens %LOCALAPPDATA%\\FiveM\\FiveM.app</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -731,9 +925,15 @@ function App(): JSX.Element {
             </div>
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>
               <DialogTrigger asChild>
-                <Button size="sm" aria-label="Create client">
-                  + New Client
-                </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="sm" aria-label="Create client">
+                        <Plus className="h-4 w-4" />
+                        New Client
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Create a new client profile</TooltipContent>
+                  </Tooltip>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
@@ -845,18 +1045,46 @@ function App(): JSX.Element {
                       </div>
 
                       <div className="flex flex-wrap gap-2">
-                        <Button disabled={isLaunching} onClick={handleLaunch}>
-                          Launch Game
-                        </Button>
-                        <Button variant="secondary" onClick={() => setDetailsOpen(true)}>
-                          Details
-                        </Button>
-                        <Button variant="secondary" onClick={() => setLinksOpen(true)}>
-                          Link Options
-                        </Button>
-                        <Button variant="secondary" onClick={() => setToolsOpen(true)}>
-                          Tools
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex">
+                              <Button disabled={!canLaunch} onClick={handleLaunch}>
+                                <Play className="h-4 w-4" />
+                                Launch
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {launchDisabledReason ?? 'Launch FiveM using this client'}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="secondary" onClick={() => setDetailsOpen(true)}>
+                              <Info className="h-4 w-4" />
+                              Details
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Rename, stats, delete</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="secondary" onClick={() => setLinksOpen(true)}>
+                              <Link2 className="h-4 w-4" />
+                              Link Options
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Choose what gets linked into FiveM.app</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="secondary" onClick={() => setToolsOpen(true)}>
+                              <Wrench className="h-4 w-4" />
+                              Tools
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Utilities (folders, shortcuts, etc.)</TooltipContent>
+                        </Tooltip>
                       </div>
 
                       <div className="text-xs text-muted-foreground">
@@ -870,6 +1098,8 @@ function App(): JSX.Element {
               </Card>
 
               {renderLaunchProgress()}
+
+              <LogsPanel logs={logs} onClear={clearAllLogs} defaultSource="launch" />
 
               <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
                 <DialogContent>
@@ -1228,8 +1458,9 @@ function App(): JSX.Element {
             <span className="text-muted-foreground">Commit info available in build</span>
           )}
         </footer>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   )
 }
 

@@ -35,3 +35,17 @@ export interface ClientStats {
   fileCount: number
   totalBytes: number
 }
+
+export type AppLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export interface AppLogEntry {
+  id: number
+  ts: number
+  level: AppLogLevel
+  message: string
+  source: 'main' | 'launch'
+}
+
+export interface GameBusyState {
+  pluginsSyncBusy: boolean
+}

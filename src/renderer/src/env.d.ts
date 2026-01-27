@@ -1,6 +1,15 @@
 /// <reference types="vite/client" />
 
-import type { ClientProfile, LinkOptions, GtaSettingsDocument, ClientStats } from './types'
+import type {
+  ClientProfile,
+  LinkOptions,
+  GtaSettingsDocument,
+  ClientStats,
+  AppLogEntry,
+  GameBusyState
+} from './types'
+
+type MainAppLogEntry = Omit<AppLogEntry, 'source'>
 
 interface IAPI {
   getClients: () => Promise<ClientProfile[]>
@@ -15,6 +24,11 @@ interface IAPI {
   updateClientLinks: (id: string, linkOptions: LinkOptions) => Promise<void>
   launchClient: (id: string) => Promise<{ success: boolean; error?: string }>
   onLaunchStatus: (callback: (status: string) => void) => () => void
+  getResolvedGamePath: () => Promise<string | null>
+  getAppLogs: () => Promise<MainAppLogEntry[]>
+  clearAppLogs: () => Promise<void>
+  onAppLog: (callback: (entry: MainAppLogEntry) => void) => () => void
+  getGameBusyState: () => Promise<GameBusyState>
   windowMinimize: () => Promise<void>
   windowToggleMaximize: () => Promise<void>
   windowClose: () => Promise<void>
