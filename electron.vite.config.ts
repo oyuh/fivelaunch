@@ -76,7 +76,8 @@ export default defineConfig(async ({ command }) => {
         alias: {
           '@renderer': resolve('src/renderer/src'),
           '@': resolve('src/renderer/src'),
-          '@shared': resolve('src/shared')
+          '@shared': resolve('src/shared'),
+          '@resources': resolve('resources')
         }
       },
       define: {

@@ -1,34 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle
-} from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from '@/components/ui/dialog'
-import {
-  Settings as SettingsIcon,
-  Plus,
-  Info,
-  Link2,
-  Wrench,
-  FolderOpen,
-  Save,
-  Minus,
-  Square,
-  X
-} from 'lucide-react'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import type {
   ClientProfile,
   LinkOptions,
@@ -37,9 +8,20 @@ import type {
   AppLogEntry,
   GameBusyState
 } from '@/types'
-import { getSettingDefinition, SETTING_CATEGORIES, type SettingOption } from '@shared/gtaSettingsMap'
-import appLogo from '../../../resources/Logo.png'
+import appLogo from '@resources/Logo.png'
 import { LogsPanel } from '@/components/LogsPanel'
+import { TitleBar } from '@/components/app/TitleBar'
+import { FirstRunDialog } from '@/components/app/dialogs/FirstRunDialog'
+import { CreateClientDialog } from '@/components/app/dialogs/CreateClientDialog'
+import { ClientListCard } from '@/components/app/ClientListCard'
+import { ClientOverviewCard } from '@/components/app/ClientOverviewCard'
+import { ClientDetailsDialog } from '@/components/app/dialogs/ClientDetailsDialog'
+import { LinkOptionsDialog } from '@/components/app/dialogs/LinkOptionsDialog'
+import { RefsDialog } from '@/components/app/dialogs/RefsDialog'
+import { GtaSettingsDialog } from '@/components/app/dialogs/GtaSettingsDialog'
+import { LaunchProgress } from '@/components/app/LaunchProgress'
+import { AppFooter } from '@/components/app/AppFooter'
+import { formatBytes } from '@/lib/format'
 
 function App(): JSX.Element {
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
@@ -80,7 +62,19 @@ function App(): JSX.Element {
     | null
   >(null)
   const launchLogSeq = useRef(0)
+  const toastSeq = useRef(0)
+  const toastTimer = useRef<number | null>(null)
+  const [toast, setToast] = useState<null | { id: number; title: string; message: string; level: 'info' | 'success' | 'warn' | 'error' }>(
+    null
+  )
   const selectedClientData = clients.find((c) => c.id === selectedClient) || null
+
+  const showToast = (title: string, message: string, level: 'info' | 'success' | 'warn' | 'error' = 'info') => {
+    toastSeq.current += 1
+    setToast({ id: toastSeq.current, title, message, level })
+    if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 6000)
+  }
 
   const appendLog = (entry: AppLogEntry) => {
     setLogs((prev) => {
@@ -224,15 +218,26 @@ function App(): JSX.Element {
       setLaunchStatus(status)
       setLaunchStatusUpdatedAt(Date.now())
 
-       const level = status.startsWith('Error:') ? 'error' : /Waiting for plugins sync/i.test(status) ? 'warn' : 'info'
-       launchLogSeq.current += 1
-       appendLog({
-         id: launchLogSeq.current,
-         ts: Date.now(),
-         level,
-         message: status,
-         source: 'launch'
-       })
+      const level = status.startsWith('Error:') ? 'error' : /Waiting for plugins sync/i.test(status) ? 'warn' : 'info'
+      launchLogSeq.current += 1
+      appendLog({
+        id: launchLogSeq.current,
+        ts: Date.now(),
+        level,
+        message: status,
+        source: 'launch'
+      })
+
+      // Bottom-right toast for high-signal events.
+      if (/^Plugins sync complete\./i.test(status)) {
+        showToast('Plugins sync', 'Complete.', 'success')
+      } else if (/^Finalizing plugins sync/i.test(status)) {
+        showToast('Plugins sync', 'Finalizing changes…', 'info')
+      } else if (/^Game closed\./i.test(status)) {
+        showToast('Game', 'Closed. Welcome back.', 'info')
+      } else if (/Plugins sync ERROR/i.test(status)) {
+        showToast('Plugins sync', status, 'error')
+      }
 
       if (status === 'Launched!') {
         setTimeout(() => {
@@ -242,6 +247,12 @@ function App(): JSX.Element {
       }
     })
     return () => unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    }
   }, [])
 
   useEffect(() => {
@@ -326,124 +337,6 @@ function App(): JSX.Element {
 
     return () => window.clearInterval(timer)
   }, [isLaunching, launchStatusUpdatedAt])
-
-  const renderLaunchProgress = () => {
-    if (!launchStatus) return null
-
-    const isError = launchStatus.startsWith('Error:')
-    const isWaitingForSync = /Waiting for plugins sync/i.test(launchStatus)
-
-    const steps = [
-      { key: 'prepare', label: 'Prepare', match: /Preparing/i },
-      { key: 'wait', label: 'Wait', match: /Waiting for plugins sync/i },
-      { key: 'link', label: 'Link', match: /Linking/i },
-      { key: 'settings', label: 'Settings', match: /(Applying GTA settings|GTA Settings|Finalizing settings)/i },
-      { key: 'start', label: 'Start', match: /Starting FiveM/i },
-      { key: 'done', label: 'Done', match: /Launched!/i }
-    ]
-
-    const currentIndex = isError
-      ? -1
-      : Math.max(
-          0,
-          steps.findIndex((s) => s.match.test(launchStatus))
-        )
-
-    const isDone = launchStatus === 'Launched!'
-
-    return (
-      <div className="mt-2 w-full rounded-lg border border-border bg-card/60 px-3 py-2 backdrop-blur">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              {isWaitingForSync && (
-                <div
-                  className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground"
-                  aria-label="Waiting for sync"
-                  title="Waiting for sync"
-                />
-              )}
-
-              {isLaunching && !isDone && !isError && (
-                <div className="flex items-center gap-1">
-                  {steps.slice(0, 5).map((step, idx) => {
-                    const completed = idx < currentIndex
-                    const active = idx === currentIndex
-                    const base = 'h-2.5 w-2.5 rounded-full transition-colors'
-
-                    if (isDone) {
-                      return (
-                        <div
-                          key={step.key}
-                          className={`${base} bg-emerald-500/90`}
-                          title={step.label}
-                        />
-                      )
-                    }
-
-                    if (completed) {
-                      return (
-                        <div
-                          key={step.key}
-                          className={`${base} bg-primary/80`}
-                          title={step.label}
-                        />
-                      )
-                    }
-
-                    if (active) {
-                      return (
-                        <div
-                          key={step.key}
-                          className={`${base} bg-primary animate-pulse`}
-                          title={step.label}
-                        />
-                      )
-                    }
-
-                    return (
-                      <div
-                        key={step.key}
-                        className={`${base} bg-muted`}
-                        title={step.label}
-                      />
-                    )
-                  })}
-                </div>
-              )}
-
-              {isError && (
-                <div className="h-2.5 w-2.5 rounded-full bg-destructive" />
-              )}
-              {isDone && (
-                <div className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              )}
-
-              <div className="truncate text-sm text-foreground">{launchStatus}</div>
-            </div>
-
-            {isWaitingForSync && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                Finishing the last plugins sync to keep clients isolated.
-              </div>
-            )}
-          </div>
-
-          {!isLaunching && (
-            <button
-              type="button"
-              onClick={() => setLaunchStatus(null)}
-              className="shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Dismiss status"
-              title="Dismiss"
-            >
-              Dismiss
-            </button>
-          )}
-        </div>
-      </div>
-    )
-  }
 
   const loadClients = async () => {
     const data = await window.api.getClients()
@@ -577,14 +470,6 @@ function App(): JSX.Element {
     setRenameValue(selectedClientData?.name || '')
   }, [selectedClientData?.id])
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const units = ['B', 'KB', 'MB', 'GB']
-    const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
-    const value = bytes / 1024 ** index
-    return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`
-  }
-
   const loadGtaSettings = async (id: string) => {
     try {
       setGtaSettingsLoading(true)
@@ -651,122 +536,6 @@ function App(): JSX.Element {
     setGtaSettingsDirty(true)
   }
 
-  const renderAttributeInput = (
-    item: GtaSettingsItem,
-    settingName: string,
-    attrKey: string,
-    value: string,
-    showLabel = true
-  ) => {
-    const settingDef = getSettingDefinition(settingName)
-
-    // If we have a definition with options, use a select dropdown
-    if (settingDef?.type === 'select' && settingDef.options) {
-      return (
-        <div className="flex flex-col gap-1">
-          {showLabel && <span className="text-xs font-medium text-muted-foreground">{humanizeKey(settingName)}</span>}
-          <select
-            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            value={value}
-            onChange={(e) => handleUpdateGtaAttribute(item.id, attrKey, e.target.value)}
-          >
-            {settingDef.options.map((opt: SettingOption) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      )
-    }
-
-    // If it's a slider, render range input
-    if (settingDef?.type === 'slider') {
-      const numValue = parseFloat(value) || 0
-      return (
-        <div className="flex flex-col gap-1">
-          {showLabel && <span className="text-xs font-medium text-muted-foreground">{humanizeKey(settingName)}</span>}
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={settingDef.min}
-              max={settingDef.max}
-              step={settingDef.step}
-              value={numValue}
-              className="flex-1"
-              onChange={(e) => handleUpdateGtaAttribute(item.id, attrKey, e.target.value)}
-            />
-            <span className="text-xs font-mono text-muted-foreground w-12 text-right">
-              {numValue.toFixed(2)}
-            </span>
-          </div>
-        </div>
-      )
-    }
-
-    // Fallback to text/number input for unmapped settings
-    const numeric = Number(value)
-    const isNumeric = !Number.isNaN(numeric) && value.trim() !== ''
-    const step = Number.isInteger(numeric) ? 1 : 0.01
-
-    return (
-      <div className="flex flex-col gap-1">
-        {showLabel && <span className="text-xs font-medium text-muted-foreground">{humanizeKey(settingName)}</span>}
-        <Input
-          type={isNumeric ? 'number' : 'text'}
-          value={value}
-          step={isNumeric ? step : undefined}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            handleUpdateGtaAttribute(item.id, attrKey, e.target.value)
-          }
-        />
-      </div>
-    )
-  }
-
-  const humanizeKey = (value: string) =>
-    value
-      .replace(/_/g, ' ')
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-  // Group settings by category from the settings map
-  const categorizedSettings = useMemo(() => {
-    const categories: Record<string, GtaSettingsItem[]> = {}
-
-    gtaSettingsItems.forEach((item) => {
-      const parts = item.path.split('/').filter(Boolean)
-      const settingName = parts[parts.length - 1]
-
-      // Get the first attribute key to look up the setting definition
-      const firstAttrKey = Object.keys(item.attributes)[0]
-      const settingDef = getSettingDefinition(settingName || firstAttrKey)
-
-      const category = settingDef?.category || 'Other'
-
-      if (!categories[category]) {
-        categories[category] = []
-      }
-      categories[category].push(item)
-    })
-
-    // Sort categories by predefined order
-    const sorted: Record<string, GtaSettingsItem[]> = {}
-    SETTING_CATEGORIES.forEach((cat: string) => {
-      if (categories[cat] && categories[cat].length > 0) {
-        sorted[cat] = categories[cat]
-      }
-    })
-
-    // Add any uncategorized at the end
-    if (categories['Other'] && categories['Other'].length > 0) {
-      sorted['Other'] = categories['Other']
-    }
-
-    return sorted
-  }, [gtaSettingsItems])
-
   const handleFirstRunContinue = () => {
     localStorage.setItem('fivelaunch.firstRunAck', 'true')
     setFirstRunOpen(false)
@@ -795,75 +564,6 @@ function App(): JSX.Element {
 
   const canLaunch = Boolean(selectedClientData) && Boolean(gamePath.trim()) && !gameBusyState.pluginsSyncBusy && !isLaunching
 
-  const LaunchLogo = (): JSX.Element => (
-    <div
-      className="h-16 w-16"
-      aria-hidden="true"
-      style={{
-        backgroundColor: 'hsl(var(--primary))',
-        WebkitMaskImage: `url(${appLogo})`,
-        WebkitMaskRepeat: 'no-repeat',
-        WebkitMaskSize: 'contain',
-        WebkitMaskPosition: 'center',
-        maskImage: `url(${appLogo})`,
-        maskRepeat: 'no-repeat',
-        maskSize: 'contain',
-        maskPosition: 'center'
-      }}
-    />
-  )
-
-  const ActionTile = ({
-    title,
-    description,
-    icon,
-    onClick,
-    disabled,
-    disabledReason
-  }: {
-    title: string
-    description: string
-    icon: JSX.Element
-    onClick: () => void
-    disabled?: boolean
-    disabledReason?: string
-  }): JSX.Element => {
-    const content = (
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        className={`group relative flex min-h-[96px] w-full flex-col items-start justify-between gap-2 rounded-xl border px-4 py-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-          disabled
-            ? 'cursor-not-allowed border-border bg-muted/20 opacity-60'
-            : 'border-border bg-card hover:border-muted-foreground/30 hover:bg-muted/30'
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className={`flex h-9 w-9 items-center justify-center rounded-lg border ${
-              disabled
-                ? 'border-border bg-muted/30 text-muted-foreground'
-                : 'border-primary/20 bg-primary/10 text-primary'
-            }`}
-          >
-            {icon}
-          </div>
-          <div className="text-sm font-semibold text-foreground">{title}</div>
-        </div>
-        <div className="text-xs text-muted-foreground">{description}</div>
-      </button>
-    )
-
-    if (!disabled || !disabledReason) return content
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{content}</TooltipTrigger>
-        <TooltipContent>{disabledReason}</TooltipContent>
-      </Tooltip>
-    )
-  }
-
   if (!window.api) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-6">
@@ -881,203 +581,67 @@ function App(): JSX.Element {
   return (
     <TooltipProvider delayDuration={250}>
       <div className="min-h-screen w-full bg-background">
-        <div className="titlebar fixed left-0 top-0 z-50 flex h-12 w-full items-center justify-between border-b border-border bg-card px-4">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <img
-              src={appLogo}
-              alt="FiveLaunch"
-              className="h-5 w-auto opacity-90 brightness-0 invert"
-            />
-            <span>FiveLaunch</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-              <DialogTrigger asChild>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                        aria-label="Settings"
-                      >
-                        <SettingsIcon className="h-4 w-4" />
-                      </Button>
-                    </DialogTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>Global settings</TooltipContent>
-                </Tooltip>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Global Settings</DialogTitle>
-                  <DialogDescription>
-                    Set the default FiveM game data location (FiveM.app).
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="mt-4 space-y-3">
-                  <Input
-                    placeholder="C:\\Users\\...\\AppData\\Local\\FiveM\\FiveM.app"
-                    value={gamePath}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGamePath(e.target.value)}
-                  />
-
-                  <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm">
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-4 w-4 accent-primary"
-                      checked={minimizeToTrayOnGameLaunch}
-                      onChange={(e) => setMinimizeToTrayOnGameLaunch(e.target.checked)}
-                    />
-                    <div className="space-y-0.5">
-                      <div className="font-medium text-foreground">
-                        Minimize to system tray on game launch
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        When you launch a client, FiveLaunch will hide to the tray. Click the tray icon to restore.
-                      </div>
-                    </div>
-                  </label>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="secondary" onClick={handleBrowseGamePath}>
-                          <FolderOpen className="h-4 w-4" />
-                          Browse
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Pick your FiveM.app folder</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button onClick={handleSaveGamePath} disabled={!gamePath.trim()}>
-                          <Save className="h-4 w-4" />
-                          Save
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Save the global FiveM.app path</TooltipContent>
-                    </Tooltip>
-                  </div>
+        {toast && (
+          <div className="pointer-events-none fixed bottom-4 right-4 z-50 w-[360px] max-w-[calc(100vw-2rem)]">
+            <div
+              key={toast.id}
+              className={
+                'pointer-events-auto rounded-lg border bg-background/95 p-4 shadow-lg backdrop-blur ' +
+                (toast.level === 'success'
+                  ? 'border-emerald-500/30'
+                  : toast.level === 'error'
+                    ? 'border-red-500/30'
+                    : toast.level === 'warn'
+                      ? 'border-yellow-500/30'
+                      : 'border-border')
+              }
+              role="status"
+              aria-live="polite"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold leading-5">{toast.title}</div>
+                  <div className="mt-0.5 text-sm text-muted-foreground">{toast.message}</div>
                 </div>
-              </DialogContent>
-            </Dialog>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  onClick={() => window.api.windowMinimize()}
-                  aria-label="Minimize"
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+                  onClick={() => setToast(null)}
                 >
-                  <Minus className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Minimize</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  onClick={() => window.api.windowToggleMaximize()}
-                  aria-label="Maximize"
-                >
-                  <Square className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Maximize</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  onClick={() => window.api.windowClose()}
-                  aria-label="Close"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Close</TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-
-        <div className="flex min-h-screen flex-col pt-12">
-        <Dialog
-          open={firstRunOpen}
-          onOpenChange={(open) => {
-            if (!open) {
-              localStorage.setItem('fivelaunch.firstRunAck', 'true')
-            }
-            setFirstRunOpen(open)
-          }}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Welcome to FiveLaunch</DialogTitle>
-              <DialogDescription>
-                Before linking files, please back up your original FiveM data. We will rename
-                existing folders and settings files the first time you link a client.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="mt-4 space-y-4 text-sm">
-              <div className="rounded-md border border-border p-4">
-                <div className="font-medium">Back up these items</div>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-                  <li>FiveM.app folders: mods, plugins, citizen</li>
-                  <li>GTA settings: settings.xml</li>
-                  <li>CitizenFX.ini</li>
-                </ul>
-              </div>
-
-              <div className="rounded-md border border-border p-4">
-                <div className="font-medium">Where they live</div>
-                <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>
-                    CitizenFX folder: <span className="text-foreground">%APPDATA%\CitizenFX</span>
-                  </div>
-                  <div>
-                    FiveM app data: <span className="text-foreground">%LOCALAPPDATA%\FiveM\FiveM.app</span>
-                  </div>
-                  <div>
-                    GTA V settings: <span className="text-foreground">%USERPROFILE%\Documents\Rockstar Games\GTA V\settings.xml</span>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="secondary" onClick={() => window.api.openCitizenFxFolder()}>
-                        <FolderOpen className="h-4 w-4" />
-                        Open CitizenFX Folder
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Opens %APPDATA%\\CitizenFX</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="secondary" onClick={() => window.api.openFiveMFolder()}>
-                        <FolderOpen className="h-4 w-4" />
-                        Open FiveM Folder
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Opens %LOCALAPPDATA%\\FiveM\\FiveM.app</TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2">
-                <Button onClick={handleFirstRunContinue}>I Understand</Button>
+                  Dismiss
+                </button>
               </div>
             </div>
-          </DialogContent>
-        </Dialog>
+          </div>
+        )}
+        <TitleBar
+          logoSrc={appLogo}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
+          gamePath={gamePath}
+          onGamePathChange={setGamePath}
+          minimizeToTrayOnGameLaunch={minimizeToTrayOnGameLaunch}
+          onMinimizeToTrayOnGameLaunchChange={setMinimizeToTrayOnGameLaunch}
+          onBrowseGamePath={handleBrowseGamePath}
+          onSaveGamePath={handleSaveGamePath}
+          onWindowMinimize={() => window.api.windowMinimize()}
+          onWindowToggleMaximize={() => window.api.windowToggleMaximize()}
+          onWindowClose={() => window.api.windowClose()}
+        />
+
+        <div className="flex min-h-screen flex-col pt-12">
+          <FirstRunDialog
+            open={firstRunOpen}
+            onOpenChange={(open) => {
+              if (!open) {
+                localStorage.setItem('fivelaunch.firstRunAck', 'true')
+              }
+              setFirstRunOpen(open)
+            }}
+            onContinue={handleFirstRunContinue}
+            onOpenCitizenFxFolder={() => window.api.openCitizenFxFolder()}
+            onOpenFiveMFolder={() => window.api.openFiveMFolder()}
+          />
         <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pb-6 pt-6">
           <div className="mb-6 flex items-center justify-between">
             <div>
@@ -1086,652 +650,120 @@ function App(): JSX.Element {
                 Create profiles, manage links, and launch FiveM.
               </p>
             </div>
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-              <DialogTrigger asChild>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DialogTrigger asChild>
-                      <Button size="sm" aria-label="Create client">
-                        <Plus className="h-4 w-4" />
-                        New Client
-                      </Button>
-                    </DialogTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>Create a new client profile</TooltipContent>
-                </Tooltip>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create New Client</DialogTitle>
-                  <DialogDescription>
-                    Give your client a name. You can edit details later.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    placeholder="New client name"
-                    value={newClientName}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setNewClientName(e.target.value)
-                    }
-                  />
-                  <Button onClick={handleCreate} disabled={!newClientName.trim()}>
-                    Create
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <CreateClientDialog
+              open={createOpen}
+              onOpenChange={setCreateOpen}
+              newClientName={newClientName}
+              onNewClientNameChange={setNewClientName}
+              onCreate={handleCreate}
+            />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-            <Card className="overflow-hidden">
-              <CardHeader>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle className="text-base">Client List</CardTitle>
-                    <CardDescription>Search and select a profile.</CardDescription>
-                  </div>
-                  <div className="rounded-full border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-                    {clients.length} total
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardContent className="space-y-3">
-                <Input
-                  placeholder="Search by name or id…"
-                  value={clientQuery}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setClientQuery(e.target.value)}
-                />
-
-                {clients.length === 0 && (
-                  <div className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                    No clients yet. Create one to get started.
-                  </div>
-                )}
-
-                {clients.length > 0 && filteredClients.length === 0 && (
-                  <div className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-                    No matches for “{clientQuery.trim()}”.
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  {filteredClients.map((client) => {
-                    const selected = selectedClient === client.id
-                    return (
-                      <button
-                        key={client.id}
-                        className={`group w-full rounded-md border px-3 py-2 text-left text-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                          selected
-                            ? 'border-primary/60 bg-primary/10 text-foreground shadow-sm'
-                            : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/30 hover:bg-muted/30 hover:text-foreground'
-                        }`}
-                        onClick={() => setSelectedClient((prev) => (prev === client.id ? null : client.id))}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate font-medium text-foreground">{client.name}</div>
-                            <div className="truncate text-xs text-muted-foreground">{client.id}</div>
-                          </div>
-                          <div
-                            className={`h-2.5 w-2.5 rounded-full transition-colors ${
-                              selected ? 'bg-primary' : 'bg-muted group-hover:bg-primary/70'
-                            }`}
-                            aria-hidden="true"
-                          />
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </CardContent>
-            </Card>
+            <ClientListCard
+              clients={clients}
+              filteredClients={filteredClients}
+              query={clientQuery}
+              onQueryChange={setClientQuery}
+              selectedClientId={selectedClient}
+              onSelectClient={(id) => setSelectedClient((prev) => (prev === id ? null : id))}
+            />
 
             <div className="space-y-4">
-              <Card>
-                <CardContent className="space-y-4 pt-6">
-                  {!selectedClientData ? (
-                    <div className="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground">
-                      <div className="font-medium text-foreground">No client selected</div>
-                      <div className="mt-1">Pick a client from the list on the left.</div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              disabled={!canLaunch}
-                              onClick={handleLaunch}
-                              className={`relative h-[260px] w-full rounded-2xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                                canLaunch
-                                  ? 'border-primary/30 bg-primary/10 hover:border-primary/50 hover:bg-primary/15'
-                                  : 'cursor-not-allowed border-border bg-muted/20 opacity-70'
-                              }`}
-                            >
-                              <div className="absolute inset-0 overflow-hidden rounded-2xl">
-                                {/* Abstract background (keeps focus on logo + CTA) */}
-                                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-amber-500/10" />
-                                <div
-                                  className="absolute inset-0 opacity-90"
-                                  style={{
-                                    backgroundImage:
-                                      'radial-gradient(800px 420px at 20% 15%, hsl(var(--primary) / 0.18), transparent 60%), radial-gradient(600px 380px at 85% 30%, rgba(245, 158, 11, 0.14), transparent 60%), radial-gradient(520px 360px at 50% 110%, rgba(16, 185, 129, 0.10), transparent 60%)'
-                                  }}
-                                />
-                                <div
-                                  className="absolute inset-0 opacity-[0.09]"
-                                  style={{
-                                    backgroundImage:
-                                      'repeating-linear-gradient(115deg, rgba(255,255,255,0.18) 0px, rgba(255,255,255,0.18) 1px, transparent 1px, transparent 14px)'
-                                  }}
-                                />
-                              </div>
+              <ClientOverviewCard
+                selectedClient={selectedClientData}
+                canLaunch={canLaunch}
+                launchDisabledReason={launchDisabledReason}
+                isLaunching={isLaunching}
+                gameBusyState={gameBusyState}
+                onLaunch={handleLaunch}
+                onOpenDetails={() => setDetailsOpen(true)}
+                onOpenLinks={() => setLinksOpen(true)}
+                onOpenGtaSettings={() => setGtaSettingsOpen(true)}
+                onOpenTools={() => setToolsOpen(true)}
+                clientStats={clientStats}
+                clientStatsLoading={clientStatsLoading}
+                lastPlayedText={lastPlayedText}
+                storageText={formatBytes(clientStats?.totalBytes ?? 0)}
+              />
 
-                              <div className="relative z-10 flex h-full flex-col justify-between">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className="truncate text-sm font-semibold text-foreground">
-                                      {selectedClientData.name}
-                                    </div>
-                                    <div className="truncate text-[11px] text-muted-foreground">
-                                      {canLaunch ? 'Ready' : launchDisabledReason}
-                                    </div>
-                                  </div>
-                                  <div
-                                    className={`h-3 w-3 shrink-0 rounded-full ${
-                                      gameBusyState.pluginsSyncBusy
-                                        ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.55)] animate-pulse'
-                                        : isLaunching
-                                          ? 'bg-primary shadow-[0_0_14px_hsl(var(--primary))] animate-pulse'
-                                          : canLaunch
-                                            ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.55)]'
-                                            : 'bg-muted'
-                                    }`}
-                                    aria-hidden="true"
-                                  />
-                                </div>
-
-                                <div className="flex flex-col items-center justify-center gap-3">
-                                  <LaunchLogo />
-                                  <div className="text-sm font-semibold text-foreground">Launch</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {canLaunch ? 'Click to launch this client' : 'Fix the requirement above'}
-                                  </div>
-                                </div>
-
-                                <div className="text-[11px] text-muted-foreground">
-                                  {gameBusyState.pluginsSyncBusy
-                                    ? 'Waiting for plugin sync to finish…'
-                                    : isLaunching
-                                      ? 'Launching…'
-                                      : 'Launch is ready.'}
-                                </div>
-                              </div>
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {canLaunch ? 'Launch selected client' : launchDisabledReason ?? 'Cannot launch right now'}
-                          </TooltipContent>
-                        </Tooltip>
-
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <ActionTile
-                            title="Details"
-                            description="Rename/delete + stats + mods list"
-                            icon={<Info className="h-4 w-4" />}
-                            onClick={() => setDetailsOpen(true)}
-                          />
-                          <ActionTile
-                            title="Link Options"
-                            description="What gets linked + plugins mode"
-                            icon={<Link2 className="h-4 w-4" />}
-                            onClick={() => setLinksOpen(true)}
-                          />
-                          <ActionTile
-                            title="GTA Settings"
-                            description="Edit settings.xml for this client"
-                            icon={<Wrench className="h-4 w-4" />}
-                            disabled={!selectedClientData.linkOptions?.gtaSettings}
-                            disabledReason="Enable GTA Settings in Link Options first"
-                            onClick={() => setGtaSettingsOpen(true)}
-                          />
-                          <ActionTile
-                            title="Refs"
-                            description="Open folders (client, FiveM, CitizenFX)"
-                            icon={<FolderOpen className="h-4 w-4" />}
-                            onClick={() => setToolsOpen(true)}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 text-xs text-muted-foreground">
-                        <div>
-                          Files: {clientStatsLoading ? 'Loading…' : `${clientStats?.fileCount ?? 0}`}
-                          {' · '}Storage: {clientStatsLoading ? 'Loading…' : formatBytes(clientStats?.totalBytes ?? 0)}
-                          {' · '}Last played: {lastPlayedText}
-                        </div>
-                        <div className="truncate font-mono text-[11px] text-muted-foreground/80">
-                          {selectedClientData.id}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-
-              {renderLaunchProgress()}
+              <LaunchProgress
+                launchStatus={launchStatus}
+                isLaunching={isLaunching}
+                onDismiss={() => setLaunchStatus(null)}
+              />
 
               <LogsPanel logs={logs} onClear={clearAllLogs} defaultSource="launch" />
 
-              <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Client Details</DialogTitle>
-                    <DialogDescription>Rename, view stats, delete, and see this client’s mods folder.</DialogDescription>
-                  </DialogHeader>
+              <ClientDetailsDialog
+                open={detailsOpen}
+                onOpenChange={setDetailsOpen}
+                client={selectedClientData}
+                clientStats={clientStats}
+                clientStatsLoading={clientStatsLoading}
+                lastPlayedText={lastPlayedText}
+                storageText={formatBytes(clientStats?.totalBytes ?? 0)}
+                renameValue={renameValue}
+                onRenameValueChange={setRenameValue}
+                onRename={handleRename}
+                modsEntries={modsEntries}
+                modsLoading={modsLoading}
+                modsError={modsError}
+                onOpenClientFolder={handleOpenFolder}
+                onCreateShortcut={handleCreateShortcut}
+                onDeleteClient={() => {
+                  if (!selectedClientData) return
+                  void handleDelete(selectedClientData.id)
+                }}
+              />
 
-                  {!selectedClientData ? (
-                    <div className="mt-4 text-sm text-muted-foreground">Select a client first.</div>
-                  ) : (
-                    <div className="mt-4 space-y-4">
-                      <div className="rounded-md border border-border p-4 text-sm">
-                        <div className="grid gap-2 text-muted-foreground">
-                          <div>
-                            <span className="text-foreground">Name:</span> {selectedClientData.name}
-                          </div>
-                          <div>
-                            <span className="text-foreground">Client ID:</span>{' '}
-                            <span className="font-mono text-xs">{selectedClientData.id}</span>
-                          </div>
-                          <div>
-                            <span className="text-foreground">Files:</span>{' '}
-                            {clientStatsLoading ? 'Loading…' : `${clientStats?.fileCount ?? 0} files`}
-                          </div>
-                          <div>
-                            <span className="text-foreground">Storage:</span>{' '}
-                            {clientStatsLoading ? 'Loading…' : formatBytes(clientStats?.totalBytes ?? 0)}
-                          </div>
-                          <div>
-                            <span className="text-foreground">Last Played:</span> {lastPlayedText}
-                          </div>
-                        </div>
-                      </div>
+              <LinkOptionsDialog
+                open={linksOpen}
+                onOpenChange={setLinksOpen}
+                client={selectedClientData}
+                onToggleLink={handleToggleLink}
+                onSetPluginsMode={handleSetPluginsMode}
+              />
 
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <Input
-                          placeholder="Rename client"
-                          value={renameValue}
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRenameValue(e.target.value)}
-                        />
-                        <Button
-                          variant="secondary"
-                          onClick={handleRename}
-                          disabled={!renameValue.trim()}
-                        >
-                          Rename
-                        </Button>
-                      </div>
+              <RefsDialog
+                open={toolsOpen}
+                onOpenChange={setToolsOpen}
+                client={selectedClientData}
+                onOpenClientFolder={handleOpenFolder}
+                onOpenClientPluginsFolder={() => {
+                  if (!selectedClientData) return
+                  window.api.openClientPluginsFolder(selectedClientData.id)
+                }}
+                onOpenFiveMFolder={() => window.api.openFiveMFolder()}
+                onOpenFiveMPluginsFolder={() => window.api.openFiveMPluginsFolder()}
+                onOpenCitizenFxFolder={() => window.api.openCitizenFxFolder()}
+              />
 
-                      <div className="rounded-md border border-border p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-medium text-foreground">Mods folder</div>
-                            <div className="text-xs text-muted-foreground">Entries inside this client’s mods folder.</div>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {modsLoading ? 'Loading…' : `${modsEntries.length} item(s)`}
-                          </div>
-                        </div>
-
-                        {modsError && (
-                          <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                            {modsError}
-                          </div>
-                        )}
-
-                        {!modsError && (
-                          <div className="mt-3 max-h-48 overflow-auto rounded-md border border-border bg-muted/20 p-3">
-                            {modsLoading ? (
-                              <div className="text-sm text-muted-foreground">Loading…</div>
-                            ) : modsEntries.length === 0 ? (
-                              <div className="text-sm text-muted-foreground">No mods found.</div>
-                            ) : (
-                              <div className="space-y-1 font-mono text-xs">
-                                {modsEntries.map((name) => (
-                                  <div key={name} className="truncate text-foreground/90">
-                                    {name}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="secondary" onClick={handleOpenFolder}>
-                          <FolderOpen className="h-4 w-4" />
-                          Open Client Folder
-                        </Button>
-                        <Button variant="secondary" onClick={handleCreateShortcut}>
-                          Create Desktop Shortcut
-                        </Button>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Button variant="secondary" onClick={() => setDetailsOpen(false)}>
-                          Close
-                        </Button>
-                        <Button variant="destructive" onClick={() => handleDelete(selectedClientData.id)}>
-                          Delete Client
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </DialogContent>
-              </Dialog>
-
-              <Dialog open={linksOpen} onOpenChange={setLinksOpen}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Link Options</DialogTitle>
-                    <DialogDescription>
-                      Choose what this client controls inside <span className="text-foreground">FiveM.app</span>.
-                      Plugins defaults to <span className="text-foreground">Copy/Sync</span>.
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  {!selectedClientData ? (
-                    <div className="mt-4 text-sm text-muted-foreground">Select a client first.</div>
-                  ) : (
-                    <div className="mt-4 space-y-2">
-                      {(
-                        [
-                          ['mods', 'Mods', 'Link client mods folder'],
-                          ['plugins', 'Plugins', 'Link client plugins folder'],
-                          ['citizen', 'Citizen', 'Advanced: replaces core citizen files'],
-                          ['gtaSettings', 'GTA Settings', 'Copy client XML into game locations'],
-                          ['citizenFxIni', 'CitizenFX.ini', 'Link/replace CitizenFX.ini']
-                        ] as const
-                      ).map(([key, label, hint]) => {
-                        const enabled = !!selectedClientData.linkOptions?.[key]
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            onClick={() => handleToggleLink(key)}
-                            className={`flex w-full items-start justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                              enabled
-                                ? 'border-primary/50 bg-primary/10'
-                                : 'border-border bg-card hover:bg-muted/30'
-                            }`}
-                          >
-                            <div>
-                              <div className="font-medium text-foreground">{label}</div>
-                              <div className="text-xs text-muted-foreground">{hint}</div>
-                            </div>
-                            <div className="mt-1">
-                              <div
-                                className={`h-5 w-9 rounded-full border transition-colors ${
-                                  enabled ? 'border-primary/60 bg-primary/60' : 'border-border bg-muted'
-                                }`}
-                                aria-hidden="true"
-                              >
-                                <div
-                                  className={`h-4 w-4 translate-y-[2px] rounded-full bg-background shadow transition-transform ${
-                                    enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'
-                                  }`}
-                                />
-                              </div>
-                            </div>
-                          </button>
-                        )
-                      })}
-
-                      {!!selectedClientData.linkOptions?.plugins && (
-                        <div className="mt-2 rounded-md border border-border bg-card px-3 py-2">
-                          <div className="text-sm font-medium text-foreground">Plugins mode</div>
-                          <div className="mt-0.5 text-xs text-muted-foreground">
-                            <span className="text-foreground">Copy/Sync</span> is recommended. It keeps
-                            <span className="text-foreground"> %LOCALAPPDATA%\FiveM\FiveM.app\plugins</span> as a real
-                            folder so in-game “Open folder” points where you expect. Junction is faster, but Windows apps
-                            often resolve the junction to the client folder.
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleSetPluginsMode('sync')}
-                              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                                (selectedClientData.linkOptions.pluginsMode ?? 'sync') === 'sync'
-                                  ? 'border-primary/60 bg-primary/10 text-foreground'
-                                  : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
-                              }`}
-                            >
-                              Copy/Sync (default)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSetPluginsMode('junction')}
-                              className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                                selectedClientData.linkOptions.pluginsMode === 'junction'
-                                  ? 'border-primary/60 bg-primary/10 text-foreground'
-                                  : 'border-border bg-card hover:bg-muted/30 text-muted-foreground'
-                              }`}
-                            >
-                              Junction (fast)
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mt-4 flex justify-end">
-                        <Button variant="secondary" onClick={() => setLinksOpen(false)}>
-                          Done
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </DialogContent>
-              </Dialog>
-
-              <Dialog open={toolsOpen} onOpenChange={setToolsOpen}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Refs</DialogTitle>
-                    <DialogDescription>Quick links to open useful folders.</DialogDescription>
-                  </DialogHeader>
-
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <Button
-                      variant="secondary"
-                      disabled={!selectedClientData}
-                      onClick={handleOpenFolder}
-                    >
-                      <FolderOpen className="h-4 w-4" />
-                      Client Folder
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={!selectedClientData}
-                      onClick={() =>
-                        selectedClientData ? window.api.openClientPluginsFolder(selectedClientData.id) : undefined
-                      }
-                    >
-                      <FolderOpen className="h-4 w-4" />
-                      Client Plugins
-                    </Button>
-                    <Button variant="secondary" onClick={() => window.api.openFiveMFolder()}>
-                      <FolderOpen className="h-4 w-4" />
-                      FiveM Folder
-                    </Button>
-                    <Button variant="secondary" onClick={() => window.api.openFiveMPluginsFolder()}>
-                      <FolderOpen className="h-4 w-4" />
-                      FiveM Plugins
-                    </Button>
-                    <Button variant="secondary" onClick={() => window.api.openCitizenFxFolder()}>
-                      <FolderOpen className="h-4 w-4" />
-                      CitizenFX Folder
-                    </Button>
-                    <Button variant="secondary" onClick={() => setToolsOpen(false)}>
-                      Close
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-
-              <Dialog open={gtaSettingsOpen} onOpenChange={setGtaSettingsOpen}>
-                <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
-                  <DialogHeader>
-                    <DialogTitle>GTA V Settings Editor</DialogTitle>
-                    <DialogDescription>
-                      Edit this client&apos;s settings.xml. These values are saved in the
-                      client folder and copied into Documents when you launch with GTA
-                      Settings enabled.
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-2">
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                      <span>Root element:</span>
-                      <span className="font-medium text-foreground">{gtaSettingsRoot}</span>
-                      <span className="text-muted-foreground">·</span>
-                      <span>{gtaSettingsItems.length} entries</span>
-                    </div>
-
-                    {gtaSettingsError && (
-                      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                        {gtaSettingsError}
-                      </div>
-                    )}
-
-                    {!gtaSettingsLoading && !gtaSettingsError && (
-                      <div className="space-y-4">
-                        {Object.keys(categorizedSettings).length === 0 ? (
-                          <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                            No settings found in settings.xml.
-                          </div>
-                        ) : (
-                          Object.entries(categorizedSettings).map(([category, items]) => (
-                            <div key={category} className="rounded-md border border-border p-4">
-                              <div className="mb-3 flex items-center gap-2">
-                                <div className="h-1 w-1 rounded-full bg-primary" />
-                                <div className="text-sm font-semibold text-foreground">{category}</div>
-                                <div className="text-xs text-muted-foreground">({items.length})</div>
-                              </div>
-
-                              <div className="grid gap-3 sm:grid-cols-2">
-                                {items.map((item) => {
-                                  const parts = item.path.split('/').filter(Boolean)
-                                  const settingName = parts[parts.length - 1]
-                                  const entries = Object.entries(item.attributes)
-
-                                  return entries.map(([attrKey, value]) => (
-                                    <div
-                                      key={`${item.id}-${attrKey}`}
-                                      className="rounded-md border border-border bg-card p-3"
-                                    >
-                                      {renderAttributeInput(item, settingName, attrKey, value, true)}
-                                    </div>
-                                  ))
-                                })}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          disabled={!selectedClientData || gtaSettingsLoading}
-                          onClick={handleImportGtaSettings}
-                        >
-                          Import from Game
-                        </Button>
-                        <Button
-                          variant="outline"
-                          disabled={!selectedClientData || gtaSettingsLoading}
-                          onClick={handleLoadFullExample}
-                        >
-                          Load Full Example
-                        </Button>
-                        <Button
-                          variant="default"
-                          disabled={!selectedClientData || !gtaSettingsDirty || gtaSettingsLoading}
-                          onClick={handleSaveGtaSettings}
-                        >
-                          Save Changes
-                        </Button>
-                      </div>
-                      <Button variant="secondary" onClick={() => setGtaSettingsOpen(false)}>
-                        Close
-                      </Button>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              <GtaSettingsDialog
+                open={gtaSettingsOpen}
+                onOpenChange={setGtaSettingsOpen}
+                selectedClientId={selectedClientData?.id ?? null}
+                rootName={gtaSettingsRoot}
+                items={gtaSettingsItems}
+                loading={gtaSettingsLoading}
+                error={gtaSettingsError}
+                dirty={gtaSettingsDirty}
+                onImportFromGame={handleImportGtaSettings}
+                onLoadFullExample={handleLoadFullExample}
+                onSave={handleSaveGtaSettings}
+                onUpdateAttribute={handleUpdateGtaAttribute}
+              />
             </div>
           </div>
         </div>
 
-        <footer className="mx-auto mt-auto flex w-full max-w-5xl flex-col items-start justify-between gap-2 border-t border-border px-6 py-4 text-xs text-muted-foreground sm:flex-row sm:items-center">
-          <div className="flex flex-wrap items-center gap-3">
-            <span>© {new Date().getFullYear()} FiveLaunch</span>
-            <a href={repoUrl} target="_blank" rel="noreferrer" className="hover:text-foreground">
-              Open Source
-            </a>
-            {updateStatus?.isUpdateAvailable && updateStatus.latestUrl && (
-              <button
-                type="button"
-                className="font-medium text-primary hover:underline"
-                onClick={() => window.open(updateStatus.latestUrl!, '_blank', 'noopener,noreferrer')}
-                title={
-                  updateStatus.latestVersion
-                    ? `Update available: v${updateStatus.latestVersion}`
-                    : 'Update available'
-                }
-              >
-                Update available{updateStatus.latestVersion ? ` (v${updateStatus.latestVersion})` : ''}
-              </button>
-            )}
-            <a
-              href="https://fivelaunch.help/support"
-              target="_blank"
-              rel="noreferrer"
-              className="hover:text-foreground"
-            >
-              Help & Support
-            </a>
-            {import.meta.env.DEV && (
-              <button
-                onClick={handleResetFirstRun}
-                className="hover:text-foreground"
-                type="button"
-              >
-                Reset First-Run
-              </button>
-            )}
-          </div>
-          {commitInfo ? (
-            <a
-              href={commitInfo.url}
-              target="_blank"
-              rel="noreferrer"
-              title={`Commit ${commitInfo.shortSha} · ${commitInfo.message}\nAPI: ${commitInfo.apiUrl}`}
-              className="hover:text-foreground"
-            >
-              Commit {commitInfo.shortSha} ·{' '}
-              {commitInfo.date ? new Date(commitInfo.date).toLocaleDateString() : '—'}
-            </a>
-          ) : (
-            <span className="text-muted-foreground">Commit info available in build</span>
-          )}
-        </footer>
+        <AppFooter
+          repoUrl={repoUrl}
+          commitInfo={commitInfo}
+          updateStatus={updateStatus}
+          onResetFirstRun={handleResetFirstRun}
+          showDevResetFirstRun={import.meta.env.DEV}
+        />
         </div>
       </div>
     </TooltipProvider>
