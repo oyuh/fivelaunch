@@ -38,13 +38,13 @@ importers:
     devDependencies:
       '@electron-toolkit/preload':
         specifier: ^3.0.0
-        version: 3.0.2(electron@28.3.3)
+        version: 3.0.2(electron@35.7.5)
       '@electron-toolkit/tsconfig':
         specifier: ^2.0.0
         version: 2.0.0(@types/node@18.19.130)
       '@electron-toolkit/utils':
         specifier: ^3.0.0
-        version: 3.0.0(electron@28.3.3)
+        version: 3.0.0(electron@35.7.5)
       '@swc/core':
         specifier: ^1.15.10
         version: 1.15.10
@@ -64,8 +64,8 @@ importers:
         specifier: ^10.4.19
         version: 10.4.19(postcss@8.4.38)
       electron:
-        specifier: ^28.2.0
-        version: 28.3.3
+        specifier: ^35.7.5
+        version: 35.7.5
       electron-builder:
         specifier: ^24.9.1
         version: 24.13.3(electron-builder-squirrel-windows@24.13.3)
@@ -962,8 +962,8 @@ packages:
   '@types/fs-extra@9.0.13':
     resolution: {integrity: sha512-nEnwB++1u5lVDM2UI4c1+5R+FYaKfaAzS4OococimjVm3nQw3TuzH5UNsocrcTBbhnerblyHj4A49qXbIiZdpA==}
 
-  '@types/http-cache-semantics@4.0.4':
-    resolution: {integrity: sha512-1m0bIFVc7eJWyve9S0RnuRgcQqF/Xd5QsUZAZeQFr1Q3/p9JWoQQEqmVy+DPTNpGXwhgIetAoYF8JSc33q29QA==}
+  '@types/http-cache-semantics@4.2.0':
+    resolution: {integrity: sha512-L3LgimLHXtGkWikKnsPg0/VFx9OGZaC+eN1u4r+OB1XRqH3meBIAVC2zr1WdMH+RHmnRkqliQAOHNJ/E0j/e0Q==}
 
   '@types/keyv@3.1.4':
     resolution: {integrity: sha512-BQ5aZNSCpj7D6K2ksrRCTmKRLEpnPvWDiLPfoGyhZ++8YtiK9d/3DBKPJgry359X/P1PfruyYwvnvwFjuEiEIg==}
@@ -973,6 +973,9 @@ packages:
 
   '@types/node@18.19.130':
     resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
+
+  '@types/node@22.19.7':
+    resolution: {integrity: sha512-MciR4AKGHWl7xwxkBa6xUGxQJ4VBOmPTF7sL+iGzuahOFaO0jHCsuEfS80pan1ef4gWId1oWOweIhrDEYLuaOw==}
 
   '@types/plist@3.0.5':
     resolution: {integrity: sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA==}
@@ -1479,8 +1482,8 @@ packages:
       '@swc/core':
         optional: true
 
-  electron@28.3.3:
-    resolution: {integrity: sha512-ObKMLSPNhomtCOBAxFS8P2DW/4umkh72ouZUlUKzXGtYuPzgr1SYhskhFWgzAsPtUzhL2CzyV2sfbHcEW4CXqw==}
+  electron@35.7.5:
+    resolution: {integrity: sha512-dnL+JvLraKZl7iusXTVTGYs10TKfzUi30uEDTqsmTm0guN9V2tbOjTzyIZbh9n3ygUjgEYyo+igAwMRXIi3IPw==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -2837,6 +2840,9 @@ packages:
   undici-types@5.26.5:
     resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
     engines: {node: '>= 4.0.0'}
@@ -3117,17 +3123,17 @@ snapshots:
       ajv: 6.12.6
       ajv-keywords: 3.5.2(ajv@6.12.6)
 
-  '@electron-toolkit/preload@3.0.2(electron@28.3.3)':
+  '@electron-toolkit/preload@3.0.2(electron@35.7.5)':
     dependencies:
-      electron: 28.3.3
+      electron: 35.7.5
 
   '@electron-toolkit/tsconfig@2.0.0(@types/node@18.19.130)':
     dependencies:
       '@types/node': 18.19.130
 
-  '@electron-toolkit/utils@3.0.0(electron@28.3.3)':
+  '@electron-toolkit/utils@3.0.0(electron@35.7.5)':
     dependencies:
-      electron: 28.3.3
+      electron: 35.7.5
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -3739,7 +3745,7 @@ snapshots:
 
   '@types/cacheable-request@6.0.3':
     dependencies:
-      '@types/http-cache-semantics': 4.0.4
+      '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
       '@types/node': 18.19.130
       '@types/responselike': 1.0.3
@@ -3754,7 +3760,7 @@ snapshots:
     dependencies:
       '@types/node': 18.19.130
 
-  '@types/http-cache-semantics@4.0.4': {}
+  '@types/http-cache-semantics@4.2.0': {}
 
   '@types/keyv@3.1.4':
     dependencies:
@@ -3765,6 +3771,10 @@ snapshots:
   '@types/node@18.19.130':
     dependencies:
       undici-types: 5.26.5
+
+  '@types/node@22.19.7':
+    dependencies:
+      undici-types: 6.21.0
 
   '@types/plist@3.0.5':
     dependencies:
@@ -4425,10 +4435,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@28.3.3:
+  electron@35.7.5:
     dependencies:
       '@electron/get': 2.0.3
-      '@types/node': 18.19.130
+      '@types/node': 22.19.7
       extract-zip: 2.0.1
     transitivePeerDependencies:
       - supports-color
@@ -6046,6 +6056,8 @@ snapshots:
       which-boxed-primitive: 1.1.1
 
   undici-types@5.26.5: {}
+
+  undici-types@6.21.0: {}
 
   universalify@0.1.2: {}
 
