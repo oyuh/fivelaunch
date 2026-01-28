@@ -52,6 +52,23 @@ Support:
 
 ---
 
+## 🚀 Quickstart (Users)
+
+1) Download the latest release and run `FiveLaunch.exe`.
+2) On first run, read the safety notes and confirm you have backups.
+3) Set your **FiveM.app** folder path in **Settings**.
+4) Create a client profile.
+5) Choose what you want linked (mods/plugins/citizen/settings) for that profile.
+6) Launch.
+
+### Minimize to tray on launch
+
+If you enable **minimize to tray on game launch**, the app will hide while FiveM is running and pop back when the game closes.
+
+---
+
+---
+
 ## 🛠️ Development
 
 ### Prerequisites
@@ -125,11 +142,20 @@ Each client has its own storage:
     CitizenFX.ini
 ```
 
+### Plugins sync (copy mode)
+
+When plugins are in **sync/copy** mode, FiveLaunch may do a short “finalizing sync” after the game closes to safely copy back changes.
+
+---
+
 ---
 
 ## 🤝 Contributing
 
 Pull requests are welcome.
+
+By contributing, you agree that your contribution can be incorporated into FiveLaunch and redistributed by the owner under any terms.
+See the license for details.
 
 Open issues here:
 - https://github.com/oyuh/fivelaunch/issues
@@ -138,7 +164,13 @@ Open issues here:
 
 ## © License
 
-This project is open source. Choose a license and add it to this repo.
+This repository is **source-available** under the **FiveLaunch Source-Available License (FiveLaunch-SAL)**.
+
+- You may **view, use, and modify** the code for personal/internal use.
+- You may **not redistribute** the code or derivatives (including public forks) without written permission.
+- You can share improvements by submitting a **pull request** back to this repository.
+
+See [LICENSE](LICENSE) for the full terms.
 
 ---
 
