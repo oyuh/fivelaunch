@@ -77,6 +77,13 @@ const readMultilineMessage = async (introPrompt) => {
   return lines.join('\n').trimEnd()
 }
 
+const interpretBackslashEscapes = (s) => {
+  const text = String(s || '')
+  // Convenience for terminals where entering multi-line is annoying:
+  // allow users to type \n and \n\n to create newlines/paragraphs.
+  return text.replace(/\\n/g, '\n')
+}
+
 const normalizeVersion = (v) => String(v || '').trim().replace(/^v/i, '')
 
 const parseSemver = (v) => {
@@ -226,15 +233,21 @@ const main = async () => {
 
     const commitDefault = `Release ${tag}`
     let commitMessage = stripWrappingQuotes(
-      await ask('Commit message (type """ for multi-line)', { defaultValue: commitDefault })
+      await ask('Commit message (Enter for default; type """ for multi-line; you can also use \\n)', {
+        defaultValue: commitDefault
+      })
     )
 
     if (commitMessage === '"""') {
-      commitMessage = await readMultilineMessage('Multi-line commit message mode')
+      commitMessage = await readMultilineMessage(
+        'Multi-line commit message mode\nTip: first line = subject, blank line, then body.'
+      )
       if (!commitMessage.trim()) {
         console.log('Empty commit message. Aborted.')
         return
       }
+    } else {
+      commitMessage = interpretBackslashEscapes(commitMessage)
     }
 
     const doCommit = await confirm(`Create commit now?`, { defaultYes: true })
