@@ -1,0 +1,70 @@
+FiveLaunch Source-Available License (FiveLaunch-SAL)
+
+Copyright (c) 2026 Lawson Hart
+All rights reserved.
+
+This license is a source-available license. It is NOT an open-source license.
+
+1. Definitions
+
+"Software" means the FiveLaunch source code and associated files in this repository.
+"You" means any individual or entity exercising permissions under this license.
+"Modify" means to copy, adapt, translate, or create derivative works of the Software.
+"Distribute" means to provide, publish, share, sublicense, sell, convey, or otherwise make available
+(including by hosting or making available as a service) any portion of the Software or a derivative work.
+
+2. Permission to Use and Modify (Limited)
+
+Subject to the restrictions below, the Licensor grants You a non-exclusive, non-transferable,
+non-sublicensable, revocable license to:
+
+  a) view and use the Software for personal or internal business purposes; and
+  b) Modify the Software for personal or internal business purposes.
+
+3. Restrictions
+
+Unless You have prior written permission from the Licensor, You may NOT:
+
+  a) Distribute the Software or any derivative works (including forks) in source or binary form;
+  b) offer the Software or a derivative work for download, resale, licensing, or as part of a product;
+  c) provide the Software or a derivative work as a hosted service (SaaS) or managed offering;
+  d) remove, alter, or obscure any copyright, trademark, or attribution notices.
+
+4. Contributions Back (Allowed)
+
+You may share modifications ONLY by submitting them back to the Licensor via:
+
+  - a pull request to this repository, or
+  - a patch/diff attached to an issue in this repository.
+
+Any such submission must:
+
+  a) clearly credit the original Software as "FiveLaunch" and the Licensor as "Lawson Hart"; and
+  b) retain this license header and copyright notice.
+
+By submitting a contribution, You grant the Licensor a perpetual, worldwide, royalty-free license to use,
+reproduce, modify, and distribute Your contribution as part of the Software under any terms.
+
+5. Attribution
+
+Where attribution is required under this license, it must be reasonably visible and include:
+
+  "Based on FiveLaunch by Lawson Hart" and a link to the original repository.
+
+6. Termination
+
+This license terminates automatically if You violate any term. Upon termination, You must stop using
+and destroy all copies of the Software in Your possession or control.
+
+7. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. YOU BEAR ALL RISK OF USING THE SOFTWARE.
+
+8. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR
+ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

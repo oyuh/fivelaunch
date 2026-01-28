@@ -4,6 +4,7 @@
   "description": "FiveLaunch - launch FiveM with select mods and settings",
   "main": "./out/main/index.js",
   "author": "Lawson Hart",
+  "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://github.com/oyuh/fivelaunch",
   "scripts": {
     "format": "prettier --write .",
