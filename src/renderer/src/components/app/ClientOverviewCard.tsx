@@ -3,7 +3,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ClientProfile, ClientStats, GameBusyState } from '@/types'
 import { Info, FolderOpen, Link2, Wrench } from 'lucide-react'
 import { ActionTile } from './ActionTile'
-import { LaunchLogo } from './LaunchLogo'
 
 export type ClientOverviewCardProps = {
   selectedClient: ClientProfile | null
@@ -62,32 +61,18 @@ export function ClientOverviewCard(props: ClientOverviewCardProps): JSX.Element 
                     onClick={onLaunch}
                     className={`relative h-[260px] w-full rounded-2xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       canLaunch
-                        ? 'border-primary/30 bg-primary/10 hover:border-primary/50 hover:bg-primary/15'
+                        ? 'border-border bg-card hover:border-primary/30 hover:bg-muted/20'
                         : 'cursor-not-allowed border-border bg-muted/20 opacity-70'
                     }`}
                   >
                     <div className="absolute inset-0 overflow-hidden rounded-2xl">
-                      <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-amber-500/10" />
-                      <div
-                        className="absolute inset-0 opacity-90"
-                        style={{
-                          backgroundImage:
-                            'radial-gradient(800px 420px at 20% 15%, hsl(var(--primary) / 0.18), transparent 60%), radial-gradient(600px 380px at 85% 30%, rgba(245, 158, 11, 0.14), transparent 60%), radial-gradient(520px 360px at 50% 110%, rgba(16, 185, 129, 0.10), transparent 60%)'
-                        }}
-                      />
-                      <div
-                        className="absolute inset-0 opacity-[0.09]"
-                        style={{
-                          backgroundImage:
-                            'repeating-linear-gradient(115deg, rgba(255,255,255,0.18) 0px, rgba(255,255,255,0.18) 1px, transparent 1px, transparent 14px)'
-                        }}
-                      />
+                      <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-transparent" />
+                      <div className="absolute inset-0 bg-[radial-gradient(700px_420px_at_30%_20%,hsl(var(--primary)_/_0.12),transparent_60%)]" />
                     </div>
 
                     <div className="relative z-10 flex h-full flex-col justify-between">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-foreground">{selectedClient.name}</div>
                           <div className="truncate text-[11px] text-muted-foreground">
                             {canLaunch ? 'Ready' : launchDisabledReason}
                           </div>
@@ -107,8 +92,9 @@ export function ClientOverviewCard(props: ClientOverviewCardProps): JSX.Element 
                       </div>
 
                       <div className="flex flex-col items-center justify-center gap-3">
-                        <LaunchLogo />
-                        <div className="text-sm font-semibold text-foreground">Launch</div>
+                        <div className="max-w-[220px] text-center text-2xl font-extrabold leading-tight text-foreground">
+                          {selectedClient.name}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           {canLaunch ? 'Click to launch this client' : 'Fix the requirement above'}
                         </div>

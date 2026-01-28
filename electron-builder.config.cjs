@@ -50,7 +50,7 @@ module.exports = {
   // Ensure the packaged app and the EXE version info reflect the release tag when present.
   extraMetadata: {
     version: appVersion,
-    description: pkg.description,
+    zdescription: pkg.description,
     author: pkg.author
   },
 
@@ -58,7 +58,7 @@ module.exports = {
   copyright: `Copyright © ${new Date().getFullYear()} Lawson Hart`,
 
   win: {
-    icon: path.join('resources', 'Logo-Full.ico'),
+    icon: path.join('resources', 'Logo-Windows.ico'),
     artifactName: 'FiveLaunch.exe',
     target: ['portable'],
 

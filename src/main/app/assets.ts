@@ -14,8 +14,8 @@ import { is } from '@electron-toolkit/utils'
  */
 export function getAppIconPath(): string {
   return is.dev
-    ? resolve(process.cwd(), 'resources', 'Logo-Full.ico')
-    : join(process.resourcesPath, 'resources', 'Logo-Full.ico')
+    ? resolve(process.cwd(), 'resources', 'Logo-Windows.ico')
+    : join(process.resourcesPath, 'resources', 'Logo-Windows.ico')
 }
 
 /**

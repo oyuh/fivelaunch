@@ -20,6 +20,39 @@ import { createMainWindow } from './app/window'
 const startupTimingEnabled =
   process.env['FIVELAUNCH_STARTUP_TIMING'] === '1' || process.env['STARTUP_TIMING'] === '1'
 
+const devToolsEnabled =
+  process.env['FIVELAUNCH_DEVTOOLS'] === '1' || (is.dev && process.env['FIVELAUNCH_DEVTOOLS'] !== '0')
+
+function shouldBlockDevToolsShortcut(input: Electron.Input): boolean {
+  // F12 is the default DevTools toggle on Windows/Linux.
+  if (input.key?.toLowerCase() === 'f12') return true
+
+  // Ctrl/Cmd+Shift+I/J/C are common DevTools shortcuts.
+  if (!input.control && !input.meta) return false
+  if (!input.shift) return false
+
+  const key = input.key?.toLowerCase()
+  return key === 'i' || key === 'j' || key === 'c'
+}
+
+function installDevToolsHardDisable(window: BrowserWindow) {
+  if (devToolsEnabled) return
+
+  window.webContents.on('before-input-event', (event, input) => {
+    if (!shouldBlockDevToolsShortcut(input)) return
+    event.preventDefault()
+  })
+
+  // If something tries to open DevTools programmatically, close it.
+  window.webContents.on('devtools-opened', () => {
+    try {
+      window.webContents.closeDevTools()
+    } catch {
+      // ignore
+    }
+  })
+}
+
 let mainWindowRef: BrowserWindow | null = null
 let isQuitting = false
 let splashWindowRef: BrowserWindow | null = null
@@ -53,6 +86,7 @@ app.whenReady().then(() => {
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+    installDevToolsHardDisable(window)
   })
 
   // Create the window ASAP; managers are loaded lazily via IPC handlers.
@@ -62,6 +96,7 @@ app.whenReady().then(() => {
     rendererUrl: is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined,
     preloadPath: join(__dirname, '../preload/index.js'),
     rendererIndexHtmlPath: join(__dirname, '../renderer/index.html'),
+    devToolsEnabled,
     getSettingsManager: managers.getSettingsManager,
     ensureTray: () => {
       tray.ensureTray()
@@ -131,6 +166,7 @@ app.whenReady().then(() => {
         rendererUrl: is.dev ? process.env['ELECTRON_RENDERER_URL'] : undefined,
         preloadPath: join(__dirname, '../preload/index.js'),
         rendererIndexHtmlPath: join(__dirname, '../renderer/index.html'),
+        devToolsEnabled,
         getSettingsManager: managers.getSettingsManager,
         ensureTray: () => {
           tray.ensureTray()

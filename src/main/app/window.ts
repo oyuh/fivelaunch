@@ -1,4 +1,4 @@
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, shell, type Event } from 'electron'
 import type { SettingsManager } from '../managers/SettingsManager'
 
 /**
@@ -21,6 +21,8 @@ export type CreateMainWindowDeps = {
   getSettingsManager: () => Promise<SettingsManager>
   ensureTray: () => void
 
+  devToolsEnabled?: boolean
+
   setMainWindowRef: (win: BrowserWindow | null) => void
   setSplashWindowRef: (win: BrowserWindow | null) => void
 
@@ -35,6 +37,7 @@ export type CreateMainWindowDeps = {
 export function createMainWindow(deps: CreateMainWindowDeps): BrowserWindow {
   const appIcon = deps.getAppIconPath()
   const splashLogo = deps.getSplashLogoDataUrl()
+  const devToolsEnabled = deps.devToolsEnabled ?? false
 
   const splashWindow = new BrowserWindow({
     width: 420,
@@ -47,7 +50,8 @@ export function createMainWindow(deps: CreateMainWindowDeps): BrowserWindow {
     show: true,
     icon: appIcon,
     webPreferences: {
-      sandbox: false
+      sandbox: false,
+      devTools: devToolsEnabled
     }
   })
 
@@ -207,14 +211,15 @@ export function createMainWindow(deps: CreateMainWindowDeps): BrowserWindow {
     icon: appIcon,
     webPreferences: {
       preload: deps.preloadPath,
-      sandbox: false
+      sandbox: false,
+      devTools: devToolsEnabled
     }
   })
 
   deps.setMainWindowRef(mainWindow)
 
   // If the user minimizes the window via OS controls/taskbar, optionally route it to tray.
-  mainWindow.on('minimize', (event) => {
+  mainWindow.on('minimize', (event: Event) => {
     void (async () => {
       try {
         const settings = (await deps.getSettingsManager()).getSettings()

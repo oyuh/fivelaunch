@@ -1,6 +1,6 @@
 {
   "name": "fivelaunch",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "FiveLaunch - launch FiveM with select mods and settings",
   "main": "./out/main/index.js",
   "author": "Lawson Hart",
@@ -27,6 +27,8 @@
     "release:cli": "node scripts/release.js"
   },
   "dependencies": {
+    "@fontsource/geist-mono": "^5.2.7",
+    "@fontsource/geist-sans": "^5.2.5",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.0.2",
     "@radix-ui/react-tooltip": "^1.2.8",
@@ -52,6 +54,8 @@
     "electron-vite": "^2.0.0",
     "eslint": "^8.56.0",
     "eslint-plugin-react": "^7.33.2",
+    "jimp": "^1.6.0",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.4.38",
     "prettier": "^3.2.4",
     "react": "^18.2.0",
@@ -89,7 +93,7 @@
       }
     ],
     "win": {
-      "icon": "resources/Logo-Full.ico",
+      "icon": "resources/Logo-Windows.ico",
       "artifactName": "FiveLaunch.exe",
       "target": [
         "portable"

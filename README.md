@@ -148,39 +148,12 @@ pnpm typecheck
 pnpm build:win
 ```
 
-### Build (macOS)
-```bash
-pnpm build:mac
-```
-
-### Build (Linux)
-```bash
-pnpm build:linux
-```
-
 Build artifacts are placed under:
 - `dist/`
 
 Useful docs:
-- Release process: [docs/RELEASING.md](docs/RELEASING.md)
-- Docs index: [docs/README.md](docs/README.md)
 - Release CLI: [scripts/release.js](scripts/release.js)
 - Tagging CLI: [scripts/tag-release.js](scripts/tag-release.js)
-
----
-
-## Resources
-
-Place icons in the `resources/` folder:
-
-- `resources/Logo-Full.ico` (Windows)
-- `resources/Logo.png` (Linux / dev window icon)
-- `resources/Logo.svg` (optional for web previews)
-
-**Recommended sizes:**
-- `.ico`: 256×256 or 512×512
-- `.png`: 512×512
-- `.icns`: 512×512 (if you add macOS)
 
 ---
 
