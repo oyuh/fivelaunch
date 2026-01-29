@@ -29,7 +29,18 @@ export function LogsPanel({ logs, defaultSource = 'launch', onClear }: Props): J
   const [source, setSource] = useState<AppLogEntry['source']>(defaultSource)
   const [query, setQuery] = useState('')
   const [copied, setCopied] = useState(false)
+  const [showAll, setShowAll] = useState(false)
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+
+  const timeFmt = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      }),
+    []
+  )
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -37,6 +48,12 @@ export function LogsPanel({ logs, defaultSource = 'launch', onClear }: Props): J
     if (!q) return base
     return base.filter((l) => l.message.toLowerCase().includes(q))
   }, [logs, query, source])
+
+  const rendered = useMemo(() => {
+    const MAX_RENDERED = 250
+    if (showAll || filtered.length <= MAX_RENDERED) return filtered
+    return filtered.slice(filtered.length - MAX_RENDERED)
+  }, [filtered, showAll])
 
   // Auto-scroll when new logs arrive (if the user is already near the bottom).
   useEffect(() => {
@@ -46,11 +63,11 @@ export function LogsPanel({ logs, defaultSource = 'launch', onClear }: Props): J
     if (bottomGap < 80) {
       el.scrollTop = el.scrollHeight
     }
-  }, [filtered.length])
+  }, [rendered.length])
 
   const copyVisible = async () => {
-    const text = filtered
-      .map((l) => `${new Date(l.ts).toLocaleTimeString()} [${l.level}] ${l.message}`)
+    const text = rendered
+      .map((l) => `${timeFmt.format(l.ts)} [${l.level}] ${l.message}`)
       .join('\n')
 
     await navigator.clipboard.writeText(text)
@@ -100,7 +117,7 @@ export function LogsPanel({ logs, defaultSource = 'launch', onClear }: Props): J
                   {copied ? 'Copied' : 'Copy'}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Copy visible logs</TooltipContent>
+              <TooltipContent>Copy shown logs</TooltipContent>
             </Tooltip>
 
             {onClear && (
@@ -127,8 +144,29 @@ export function LogsPanel({ logs, defaultSource = 'launch', onClear }: Props): J
               className="pl-8"
             />
           </div>
-          <div className="text-xs text-muted-foreground">{filtered.length} shown</div>
+          <div className="text-xs text-muted-foreground">
+            {rendered.length} / {filtered.length} shown
+          </div>
         </div>
+
+        {filtered.length > rendered.length && (
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+            <div className="text-muted-foreground">
+              Showing the latest {rendered.length} logs for performance.
+            </div>
+            <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setShowAll(true)}>
+              Show all
+            </Button>
+          </div>
+        )}
+
+        {showAll && filtered.length > 250 && (
+          <div className="mt-2 flex items-center justify-end">
+            <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setShowAll(false)}>
+              Back to latest
+            </Button>
+          </div>
+        )}
       </CardHeader>
 
       <CardContent>
@@ -140,10 +178,10 @@ export function LogsPanel({ logs, defaultSource = 'launch', onClear }: Props): J
             <div className="text-sm text-muted-foreground">No logs yet.</div>
           ) : (
             <div className="min-w-0 space-y-1 font-mono text-xs">
-              {filtered.map((l) => (
+              {rendered.map((l) => (
                 <div key={`${l.source}-${l.id}`} className="flex min-w-0 gap-3">
                   <div className="w-[88px] shrink-0 text-muted-foreground">
-                    {new Date(l.ts).toLocaleTimeString()}
+                    {timeFmt.format(l.ts)}
                   </div>
                   <div className={`shrink-0 uppercase ${levelClass(l.level)}`}>{l.level}</div>
                   <div className="min-w-0 max-w-full flex-1 whitespace-pre-wrap break-words break-all text-foreground/90">

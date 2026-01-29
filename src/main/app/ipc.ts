@@ -12,7 +12,7 @@ import fs from 'fs'
 import { getCitizenFxDir, getFiveMPath } from '../utils/paths'
 import { checkForUpdatesOnGitHub, type UpdateStatus } from '../utils/updateChecker'
 import type { LinkOptions } from '../types'
-import { isProcessRunning } from '../managers/gameManager/processUtils'
+import { refreshProcessRunningMany } from '../managers/gameManager/processUtils'
 import type { AppLogStore } from './logging'
 import type { ManagerGetters } from './managers'
 import { sanitizeWindowsFileName } from './args'
@@ -125,6 +125,10 @@ function registerSettingsHandlers(
     ;(await managers.getSettingsManager()).setMinimizeToTrayOnGameLaunch(Boolean(enabled))
   })
 
+  ipcMain.handle('set-theme-primary-hex', async (_event, hex: string | null) => {
+    ;(await managers.getSettingsManager()).setThemePrimaryHex(hex)
+  })
+
   ipcMain.handle('browse-game-path', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Select FiveM.app folder',
@@ -149,6 +153,8 @@ function registerSettingsHandlers(
     setUpdateCache({ ts: now, value: status })
     return status
   })
+
+  ipcMain.handle('get-app-version', async () => app.getVersion())
 
   ipcMain.handle('get-app-logs', async () => deps.appLog.getLogs())
   ipcMain.handle('clear-app-logs', async () => deps.appLog.clearLogs())
@@ -217,33 +223,45 @@ function registerLaunchHandlers(deps: IpcDeps): void {
     let seenRunning = false
     const startedAt = Date.now()
 
+    let inFlight = false
     gameExitWatcher = setInterval(() => {
       if (token !== gameExitWatcherToken) {
         stopWatcher()
         return
       }
 
-      const running = isProcessRunning('FiveM.exe') || isProcessRunning('GTA5.exe')
-      if (!seenRunning) {
-        if (running) {
-          seenRunning = true
-          return
-        }
-        if (Date.now() - startedAt > 60_000) {
+      if (inFlight) return
+      inFlight = true
+      void refreshProcessRunningMany(['FiveM.exe', 'GTA5.exe'])
+        .then((r) => Boolean(r['FiveM.exe'] || r['GTA5.exe']))
+        .catch(() => false)
+        .then((running) => {
+          if (token !== gameExitWatcherToken) return
+
+          if (!seenRunning) {
+            if (running) {
+              seenRunning = true
+              return
+            }
+            if (Date.now() - startedAt > 60_000) {
+              stopWatcher()
+            }
+            return
+          }
+
+          if (running) return
+
           stopWatcher()
-        }
-        return
-      }
-
-      if (running) return
-
-      stopWatcher()
-      deps.restoreFromTray()
-      try {
-        webContents.send('launch-status', 'Game closed.')
-      } catch {
-        // ignore
-      }
+          deps.restoreFromTray()
+          try {
+            webContents.send('launch-status', 'Game closed.')
+          } catch {
+            // ignore
+          }
+        })
+        .finally(() => {
+          inFlight = false
+        })
     }, 1000)
   }
 

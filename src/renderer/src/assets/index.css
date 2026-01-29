@@ -41,6 +41,7 @@
 
   body {
     @apply bg-background text-foreground font-sans;
+    overflow: hidden;
   }
 }
 
@@ -50,6 +51,38 @@
 
 .titlebar button {
   -webkit-app-region: no-drag;
+}
+
+/* Shared slider styling (used by theme picker + GTA settings) */
+.theme-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 12px;
+  border-radius: 9999px;
+  background: var(--theme-slider-track, hsl(var(--muted)));
+  border: 1px solid hsl(var(--border));
+  outline: none;
+}
+
+.theme-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  border: 2px solid hsl(var(--background));
+  box-shadow: 0 0 0 1px hsl(var(--border));
+}
+
+.theme-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  border: 2px solid hsl(var(--background));
+  box-shadow: 0 0 0 1px hsl(var(--border));
 }
 
 /* Themed scrollbar */

@@ -21,7 +21,7 @@ export function AppFooter(props: AppFooterProps): JSX.Element {
   const { repoUrl, commitInfo, updateStatus, onResetFirstRun, showDevResetFirstRun } = props
 
   return (
-    <footer className="mx-auto mt-auto flex w-full max-w-5xl flex-col items-start justify-between gap-2 border-t border-border px-6 py-4 text-xs text-muted-foreground sm:flex-row sm:items-center">
+    <footer className="mx-auto mt-8 flex w-full max-w-6xl flex-col items-start justify-between gap-2 border-t border-border px-6 py-4 text-xs text-muted-foreground sm:flex-row sm:items-center">
       <div className="flex flex-wrap items-center gap-3">
         <span>© {new Date().getFullYear()} FiveLaunch</span>
         <a href={repoUrl} target="_blank" rel="noreferrer" className="hover:text-foreground">

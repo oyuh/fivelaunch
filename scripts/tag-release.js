@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process')
+const { spawnSync, execSync } = require('child_process')
+const fs = require('fs')
+const path = require('path')
 const readline = require('readline')
 
 const run = (cmd) => execSync(cmd, { stdio: 'pipe' }).toString().trim()
@@ -34,6 +36,40 @@ const rl = readline.createInterface({
 
 const ask = (q) => new Promise((res) => rl.question(q, res))
 
+const getArgValue = (names) => {
+  const argv = process.argv.slice(2)
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    for (const name of names) {
+      if (arg === name) {
+        const next = argv[i + 1]
+        return next && !next.startsWith('-') ? next : ''
+      }
+      if (arg.startsWith(`${name}=`)) {
+        return arg.slice(name.length + 1)
+      }
+    }
+  }
+  return ''
+}
+
+const resolveMessageFile = (filePath) => {
+  if (!filePath) return ''
+  const full = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath)
+  if (!fs.existsSync(full)) return ''
+  const raw = fs.readFileSync(full, 'utf8').replace(/^\uFEFF/, '').trimEnd()
+  if (!raw.trim()) return ''
+  return full
+}
+
+const runInherit = (file, args) => {
+  const res = spawnSync(file, args, { stdio: 'inherit', shell: false })
+  if (res.error) throw res.error
+  if (typeof res.status === 'number' && res.status !== 0) {
+    throw new Error(`${file} exited with code ${res.status}`)
+  }
+}
+
 const main = async () => {
   printHeader()
   listTags()
@@ -45,7 +81,10 @@ const main = async () => {
     process.exit(1)
   }
 
-  const desc = (await ask('Optional descriptor (e.g., "hotfix", "beta", leave empty): ')).trim()
+  const messageFileArg = getArgValue(['--message-file', '--messageFile', '--msg-file', '-F', '--file'])
+  const messageFile = resolveMessageFile(messageFileArg)
+
+  const desc = messageFile ? '' : (await ask('Optional descriptor (e.g., "hotfix", "beta", leave empty): ')).trim()
   const annotatedMsg = desc ? `${tag} - ${desc}` : tag
 
   const confirm = (await ask(`\nCreate and push tag ${tag}? (y/N): `)).trim().toLowerCase()
@@ -56,8 +95,13 @@ const main = async () => {
   }
 
   try {
-    execSync(`git tag -a ${tag} -m "${annotatedMsg}"`, { stdio: 'inherit' })
-    execSync(`git push origin ${tag}`, { stdio: 'inherit' })
+    if (messageFile) {
+      console.log(`Using annotated tag message from file: ${path.relative(process.cwd(), messageFile)}`)
+      runInherit('git', ['tag', '-a', tag, '-F', messageFile])
+    } else {
+      runInherit('git', ['tag', '-a', tag, '-m', annotatedMsg])
+    }
+    runInherit('git', ['push', 'origin', tag])
     console.log(`Tag ${tag} pushed successfully.`)
   } catch (e) {
     console.error('Failed to create or push tag.')

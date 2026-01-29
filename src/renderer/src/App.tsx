@@ -22,6 +22,9 @@ import { GtaSettingsDialog } from '@/components/app/dialogs/GtaSettingsDialog'
 import { LaunchProgress } from '@/components/app/LaunchProgress'
 import { AppFooter } from '@/components/app/AppFooter'
 import { formatBytes } from '@/lib/format'
+import { applyPrimaryHexToRoot, DEFAULT_PRIMARY_HEX, isHexColor } from '@/lib/theme'
+
+const PRIMARY_COLOR_STORAGE_KEY = 'fivelaunch.theme.primaryHex'
 
 function App(): JSX.Element {
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
@@ -61,7 +64,12 @@ function App(): JSX.Element {
       }
     | null
   >(null)
+  const [appVersion, setAppVersion] = useState<string>('')
+  const [primaryHex, setPrimaryHex] = useState<string>(DEFAULT_PRIMARY_HEX)
+  const pendingThemeSaveTimer = useRef<number | null>(null)
   const launchLogSeq = useRef(0)
+  const pendingLogFlushTimer = useRef<number | null>(null)
+  const pendingLogs = useRef<AppLogEntry[]>([])
   const toastSeq = useRef(0)
   const toastTimer = useRef<number | null>(null)
   const [toast, setToast] = useState<null | { id: number; title: string; message: string; level: 'info' | 'success' | 'warn' | 'error' }>(
@@ -76,13 +84,22 @@ function App(): JSX.Element {
     toastTimer.current = window.setTimeout(() => setToast(null), 6000)
   }
 
-  const appendLog = (entry: AppLogEntry) => {
-    setLogs((prev) => {
-      const next = [...prev, entry]
-      // Keep memory bounded.
-      if (next.length > 900) return next.slice(next.length - 900)
-      return next
-    })
+  const appendLogs = (entries: AppLogEntry[]) => {
+    if (entries.length === 0) return
+    pendingLogs.current.push(...entries)
+
+    if (pendingLogFlushTimer.current !== null) return
+    pendingLogFlushTimer.current = window.setTimeout(() => {
+      pendingLogFlushTimer.current = null
+      const batch = pendingLogs.current.splice(0)
+      if (batch.length === 0) return
+
+      setLogs((prev) => {
+        const merged = [...prev, ...batch]
+        if (merged.length > 900) return merged.slice(merged.length - 900)
+        return merged
+      })
+    }, 50)
   }
 
   const filteredClients = useMemo(() => {
@@ -121,11 +138,52 @@ function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (!window.api) return
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const v = await window.api.getAppVersion()
+        if (!cancelled) setAppVersion(String(v || ''))
+      } catch {
+        // ignore
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     const acknowledged = localStorage.getItem('fivelaunch.firstRunAck')
     if (!acknowledged) {
       setFirstRunOpen(true)
     }
   }, [])
+
+  useEffect(() => {
+    if (!primaryHex || !isHexColor(primaryHex)) return
+    applyPrimaryHexToRoot(primaryHex)
+    try {
+      localStorage.setItem(PRIMARY_COLOR_STORAGE_KEY, primaryHex)
+    } catch {
+      // ignore
+    }
+
+    if (!window.api || typeof window.api.setThemePrimaryHex !== 'function') return
+    if (pendingThemeSaveTimer.current) {
+      window.clearTimeout(pendingThemeSaveTimer.current)
+      pendingThemeSaveTimer.current = null
+    }
+
+    pendingThemeSaveTimer.current = window.setTimeout(() => {
+      pendingThemeSaveTimer.current = null
+      const valueToSave = primaryHex === DEFAULT_PRIMARY_HEX ? null : primaryHex
+      void window.api.setThemePrimaryHex(valueToSave)
+    }, 350)
+  }, [primaryHex])
 
   useEffect(() => {
     if (!window.api) return
@@ -138,6 +196,23 @@ function App(): JSX.Element {
 
         const saved = (settings.gamePath || '').trim()
         setMinimizeToTrayOnGameLaunch(Boolean(settings.minimizeToTrayOnGameLaunch))
+
+        // Theme primary color (prefer settings.json; fall back to legacy localStorage)
+        try {
+          const fromSettings = String((settings as any).themePrimaryHex || '').trim()
+          const fromLocal = String(localStorage.getItem(PRIMARY_COLOR_STORAGE_KEY) || '').trim()
+          const picked = isHexColor(fromSettings) ? fromSettings : isHexColor(fromLocal) ? fromLocal : DEFAULT_PRIMARY_HEX
+          setPrimaryHex(picked)
+          applyPrimaryHexToRoot(picked)
+
+          // If we only have localStorage, migrate it into settings.json for persistence.
+          if (!isHexColor(fromSettings) && isHexColor(fromLocal) && typeof window.api.setThemePrimaryHex === 'function') {
+            void window.api.setThemePrimaryHex(fromLocal)
+          }
+        } catch {
+          applyPrimaryHexToRoot(DEFAULT_PRIMARY_HEX)
+        }
+
         if (saved) {
           setGamePath(saved)
           return
@@ -220,13 +295,15 @@ function App(): JSX.Element {
 
       const level = status.startsWith('Error:') ? 'error' : /Waiting for plugins sync/i.test(status) ? 'warn' : 'info'
       launchLogSeq.current += 1
-      appendLog({
+      appendLogs([
+        {
         id: launchLogSeq.current,
         ts: Date.now(),
         level,
         message: status,
         source: 'launch'
-      })
+        }
+      ])
 
       // Bottom-right toast for high-signal events.
       if (/^Plugins sync complete\./i.test(status)) {
@@ -252,6 +329,7 @@ function App(): JSX.Element {
   useEffect(() => {
     return () => {
       if (toastTimer.current) window.clearTimeout(toastTimer.current)
+      if (pendingLogFlushTimer.current !== null) window.clearTimeout(pendingLogFlushTimer.current)
     }
   }, [])
 
@@ -280,7 +358,7 @@ function App(): JSX.Element {
 
     const unsubscribe = window.api.onAppLog((entry) => {
       if (cancelled) return
-      appendLog({ ...entry, source: 'main' })
+      appendLogs([{ ...entry, source: 'main' }])
     })
 
     return () => {
@@ -580,7 +658,7 @@ function App(): JSX.Element {
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="min-h-screen w-full bg-background">
+      <div className="h-screen w-full overflow-hidden bg-background">
         {toast && (
           <div className="pointer-events-none fixed bottom-4 right-4 z-50 w-[360px] max-w-[calc(100vw-2rem)]">
             <div
@@ -616,6 +694,10 @@ function App(): JSX.Element {
         )}
         <TitleBar
           logoSrc={appLogo}
+          appVersion={appVersion}
+          primaryHex={primaryHex}
+          onPrimaryHexChange={setPrimaryHex}
+          onResetPrimaryHex={() => setPrimaryHex(DEFAULT_PRIMARY_HEX)}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
           gamePath={gamePath}
@@ -629,7 +711,7 @@ function App(): JSX.Element {
           onWindowClose={() => window.api.windowClose()}
         />
 
-        <div className="flex min-h-screen flex-col pt-12">
+        <div className="flex h-full flex-col pt-12 overflow-hidden">
           <FirstRunDialog
             open={firstRunOpen}
             onOpenChange={(open) => {
@@ -642,128 +724,129 @@ function App(): JSX.Element {
             onOpenCitizenFxFolder={() => window.api.openCitizenFxFolder()}
             onOpenFiveMFolder={() => window.api.openFiveMFolder()}
           />
-        <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pb-6 pt-6">
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold">FiveLaunch Clients</h1>
-              <p className="text-sm text-muted-foreground">
-                Create profiles, manage links, and launch FiveM.
-              </p>
+
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 pb-6 pt-6">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <h1 className="text-2xl font-semibold">FiveLaunch Clients</h1>
+                  <p className="text-sm text-muted-foreground">Create profiles, manage links, and launch FiveM.</p>
+                </div>
+                <CreateClientDialog
+                  open={createOpen}
+                  onOpenChange={setCreateOpen}
+                  newClientName={newClientName}
+                  onNewClientNameChange={setNewClientName}
+                  onCreate={handleCreate}
+                />
+              </div>
+
+              <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+                <ClientListCard
+                  clients={clients}
+                  filteredClients={filteredClients}
+                  query={clientQuery}
+                  onQueryChange={setClientQuery}
+                  selectedClientId={selectedClient}
+                  onSelectClient={(id) => setSelectedClient((prev) => (prev === id ? null : id))}
+                />
+
+                <div className="space-y-4">
+                  <ClientOverviewCard
+                    selectedClient={selectedClientData}
+                    canLaunch={canLaunch}
+                    launchDisabledReason={launchDisabledReason}
+                    isLaunching={isLaunching}
+                    gameBusyState={gameBusyState}
+                    onLaunch={handleLaunch}
+                    onOpenDetails={() => setDetailsOpen(true)}
+                    onOpenLinks={() => setLinksOpen(true)}
+                    onOpenGtaSettings={() => setGtaSettingsOpen(true)}
+                    onOpenTools={() => setToolsOpen(true)}
+                    clientStats={clientStats}
+                    clientStatsLoading={clientStatsLoading}
+                    lastPlayedText={lastPlayedText}
+                    storageText={formatBytes(clientStats?.totalBytes ?? 0)}
+                  />
+
+                  <LaunchProgress
+                    launchStatus={launchStatus}
+                    isLaunching={isLaunching}
+                    onDismiss={() => setLaunchStatus(null)}
+                  />
+
+                  <LogsPanel logs={logs} onClear={clearAllLogs} defaultSource="launch" />
+
+                  <ClientDetailsDialog
+                    open={detailsOpen}
+                    onOpenChange={setDetailsOpen}
+                    client={selectedClientData}
+                    clientStats={clientStats}
+                    clientStatsLoading={clientStatsLoading}
+                    lastPlayedText={lastPlayedText}
+                    storageText={formatBytes(clientStats?.totalBytes ?? 0)}
+                    renameValue={renameValue}
+                    onRenameValueChange={setRenameValue}
+                    onRename={handleRename}
+                    modsEntries={modsEntries}
+                    modsLoading={modsLoading}
+                    modsError={modsError}
+                    onOpenClientFolder={handleOpenFolder}
+                    onCreateShortcut={handleCreateShortcut}
+                    onDeleteClient={() => {
+                      if (!selectedClientData) return
+                      void handleDelete(selectedClientData.id)
+                    }}
+                  />
+
+                  <LinkOptionsDialog
+                    open={linksOpen}
+                    onOpenChange={setLinksOpen}
+                    client={selectedClientData}
+                    onToggleLink={handleToggleLink}
+                    onSetPluginsMode={handleSetPluginsMode}
+                  />
+
+                  <RefsDialog
+                    open={toolsOpen}
+                    onOpenChange={setToolsOpen}
+                    client={selectedClientData}
+                    onOpenClientFolder={handleOpenFolder}
+                    onOpenClientPluginsFolder={() => {
+                      if (!selectedClientData) return
+                      window.api.openClientPluginsFolder(selectedClientData.id)
+                    }}
+                    onOpenFiveMFolder={() => window.api.openFiveMFolder()}
+                    onOpenFiveMPluginsFolder={() => window.api.openFiveMPluginsFolder()}
+                    onOpenCitizenFxFolder={() => window.api.openCitizenFxFolder()}
+                  />
+
+                  <GtaSettingsDialog
+                    open={gtaSettingsOpen}
+                    onOpenChange={setGtaSettingsOpen}
+                    selectedClientId={selectedClientData?.id ?? null}
+                    rootName={gtaSettingsRoot}
+                    items={gtaSettingsItems}
+                    loading={gtaSettingsLoading}
+                    error={gtaSettingsError}
+                    dirty={gtaSettingsDirty}
+                    onImportFromGame={handleImportGtaSettings}
+                    onLoadFullExample={handleLoadFullExample}
+                    onSave={handleSaveGtaSettings}
+                    onUpdateAttribute={handleUpdateGtaAttribute}
+                  />
+                </div>
+              </div>
+
+              <AppFooter
+                repoUrl={repoUrl}
+                commitInfo={commitInfo}
+                updateStatus={updateStatus}
+                onResetFirstRun={handleResetFirstRun}
+                showDevResetFirstRun={import.meta.env.DEV}
+              />
             </div>
-            <CreateClientDialog
-              open={createOpen}
-              onOpenChange={setCreateOpen}
-              newClientName={newClientName}
-              onNewClientNameChange={setNewClientName}
-              onCreate={handleCreate}
-            />
           </div>
-
-          <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-            <ClientListCard
-              clients={clients}
-              filteredClients={filteredClients}
-              query={clientQuery}
-              onQueryChange={setClientQuery}
-              selectedClientId={selectedClient}
-              onSelectClient={(id) => setSelectedClient((prev) => (prev === id ? null : id))}
-            />
-
-            <div className="space-y-4">
-              <ClientOverviewCard
-                selectedClient={selectedClientData}
-                canLaunch={canLaunch}
-                launchDisabledReason={launchDisabledReason}
-                isLaunching={isLaunching}
-                gameBusyState={gameBusyState}
-                onLaunch={handleLaunch}
-                onOpenDetails={() => setDetailsOpen(true)}
-                onOpenLinks={() => setLinksOpen(true)}
-                onOpenGtaSettings={() => setGtaSettingsOpen(true)}
-                onOpenTools={() => setToolsOpen(true)}
-                clientStats={clientStats}
-                clientStatsLoading={clientStatsLoading}
-                lastPlayedText={lastPlayedText}
-                storageText={formatBytes(clientStats?.totalBytes ?? 0)}
-              />
-
-              <LaunchProgress
-                launchStatus={launchStatus}
-                isLaunching={isLaunching}
-                onDismiss={() => setLaunchStatus(null)}
-              />
-
-              <LogsPanel logs={logs} onClear={clearAllLogs} defaultSource="launch" />
-
-              <ClientDetailsDialog
-                open={detailsOpen}
-                onOpenChange={setDetailsOpen}
-                client={selectedClientData}
-                clientStats={clientStats}
-                clientStatsLoading={clientStatsLoading}
-                lastPlayedText={lastPlayedText}
-                storageText={formatBytes(clientStats?.totalBytes ?? 0)}
-                renameValue={renameValue}
-                onRenameValueChange={setRenameValue}
-                onRename={handleRename}
-                modsEntries={modsEntries}
-                modsLoading={modsLoading}
-                modsError={modsError}
-                onOpenClientFolder={handleOpenFolder}
-                onCreateShortcut={handleCreateShortcut}
-                onDeleteClient={() => {
-                  if (!selectedClientData) return
-                  void handleDelete(selectedClientData.id)
-                }}
-              />
-
-              <LinkOptionsDialog
-                open={linksOpen}
-                onOpenChange={setLinksOpen}
-                client={selectedClientData}
-                onToggleLink={handleToggleLink}
-                onSetPluginsMode={handleSetPluginsMode}
-              />
-
-              <RefsDialog
-                open={toolsOpen}
-                onOpenChange={setToolsOpen}
-                client={selectedClientData}
-                onOpenClientFolder={handleOpenFolder}
-                onOpenClientPluginsFolder={() => {
-                  if (!selectedClientData) return
-                  window.api.openClientPluginsFolder(selectedClientData.id)
-                }}
-                onOpenFiveMFolder={() => window.api.openFiveMFolder()}
-                onOpenFiveMPluginsFolder={() => window.api.openFiveMPluginsFolder()}
-                onOpenCitizenFxFolder={() => window.api.openCitizenFxFolder()}
-              />
-
-              <GtaSettingsDialog
-                open={gtaSettingsOpen}
-                onOpenChange={setGtaSettingsOpen}
-                selectedClientId={selectedClientData?.id ?? null}
-                rootName={gtaSettingsRoot}
-                items={gtaSettingsItems}
-                loading={gtaSettingsLoading}
-                error={gtaSettingsError}
-                dirty={gtaSettingsDirty}
-                onImportFromGame={handleImportGtaSettings}
-                onLoadFullExample={handleLoadFullExample}
-                onSave={handleSaveGtaSettings}
-                onUpdateAttribute={handleUpdateGtaAttribute}
-              />
-            </div>
-          </div>
-        </div>
-
-        <AppFooter
-          repoUrl={repoUrl}
-          commitInfo={commitInfo}
-          updateStatus={updateStatus}
-          onResetFirstRun={handleResetFirstRun}
-          showDevResetFirstRun={import.meta.env.DEV}
-        />
         </div>
       </div>
     </TooltipProvider>

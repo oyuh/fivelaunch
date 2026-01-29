@@ -37,14 +37,16 @@ interface IAPI {
     source: 'releases-latest' | 'tags-latest' | 'error'
     error?: string
   }>
+  getAppVersion: () => Promise<string>
   onAppLog: (callback: (entry: MainAppLogEntry) => void) => () => void
   getGameBusyState: () => Promise<GameBusyState>
   windowMinimize: () => Promise<void>
   windowToggleMaximize: () => Promise<void>
   windowClose: () => Promise<void>
-  getSettings: () => Promise<{ gamePath?: string; minimizeToTrayOnGameLaunch?: boolean }>
+  getSettings: () => Promise<{ gamePath?: string; minimizeToTrayOnGameLaunch?: boolean; themePrimaryHex?: string }>
   setGamePath: (gamePath: string) => Promise<void>
   setMinimizeToTrayOnGameLaunch: (enabled: boolean) => Promise<void>
+  setThemePrimaryHex: (hex: string | null) => Promise<void>
   browseGamePath: () => Promise<string | null>
   getClientGtaSettings: (id: string) => Promise<GtaSettingsDocument>
   saveClientGtaSettings: (id: string, doc: GtaSettingsDocument) => Promise<void>

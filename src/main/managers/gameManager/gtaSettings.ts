@@ -192,6 +192,7 @@ export function startGtaSettingsEnforcement(source: string, targets: string[]): 
   const intervalMs = 750
 
   const writes: Record<string, number> = {}
+  const lastSeenSig: Record<string, string> = {}
 
   const interval = setInterval(() => {
     const now = Date.now()
@@ -201,6 +202,18 @@ export function startGtaSettingsEnforcement(source: string, targets: string[]): 
     }
 
     for (const target of uniqueTargets) {
+      // Fast-path: if the file hasn't changed since last check, don't re-read it.
+      try {
+        const st = fs.statSync(target)
+        const sig = `${st.size}:${st.mtimeMs}`
+        if (lastSeenSig[target] === sig) {
+          continue
+        }
+        lastSeenSig[target] = sig
+      } catch {
+        // ignore
+      }
+
       let current: Buffer | null = null
       try {
         current = fs.readFileSync(target)

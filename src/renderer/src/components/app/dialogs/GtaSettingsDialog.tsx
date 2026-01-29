@@ -71,7 +71,7 @@ function renderAttributeInput(
             max={settingDef.max}
             step={settingDef.step}
             value={numValue}
-            className="flex-1"
+            className="theme-slider flex-1"
             onChange={(e) => onUpdate(e.target.value)}
           />
           <span className="text-xs font-mono text-muted-foreground w-12 text-right">{numValue.toFixed(2)}</span>

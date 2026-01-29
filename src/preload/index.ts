@@ -25,10 +25,19 @@ const api = {
   getAppLogs: () => ipcRenderer.invoke('get-app-logs'),
   clearAppLogs: () => ipcRenderer.invoke('clear-app-logs'),
   getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   onAppLog: (callback: (entry: any) => void) => {
-    const subscription = (_event: any, entry: any) => callback(entry)
-    ipcRenderer.on('app-log', subscription)
-    return () => ipcRenderer.removeListener('app-log', subscription)
+    const onSingle = (_event: any, entry: any) => callback(entry)
+    const onBatch = (_event: any, entries: any[]) => {
+      if (!Array.isArray(entries)) return
+      for (const entry of entries) callback(entry)
+    }
+    ipcRenderer.on('app-log', onSingle)
+    ipcRenderer.on('app-log-batch', onBatch)
+    return () => {
+      ipcRenderer.removeListener('app-log', onSingle)
+      ipcRenderer.removeListener('app-log-batch', onBatch)
+    }
   },
   getGameBusyState: () => ipcRenderer.invoke('get-game-busy-state'),
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
@@ -38,6 +47,7 @@ const api = {
   setGamePath: (gamePath: string) => ipcRenderer.invoke('set-game-path', gamePath),
   setMinimizeToTrayOnGameLaunch: (enabled: boolean) =>
     ipcRenderer.invoke('set-minimize-to-tray-on-game-launch', enabled),
+  setThemePrimaryHex: (hex: string | null) => ipcRenderer.invoke('set-theme-primary-hex', hex),
   browseGamePath: () => ipcRenderer.invoke('browse-game-path'),
   getClientGtaSettings: (id: string) => ipcRenderer.invoke('get-client-gta-settings', id),
   saveClientGtaSettings: (id: string, doc: unknown) =>

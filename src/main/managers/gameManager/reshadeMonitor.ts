@@ -1,3 +1,4 @@
+import fs from 'fs'
 import { getReshadeFileSnapshot } from './reshadeSync'
 
 /**
@@ -27,10 +28,17 @@ export function startReShadeFileMonitor(
       }
       if (!running) return
 
-      const snapshot = getReshadeFileSnapshot(filePath)
+      // Cheap stat check first; only read/hash the file if it actually changed.
+      try {
+        const st = fs.statSync(filePath)
+        const sig = `${st.size}:${st.mtimeMs}`
+        if (sig === lastSig) return
+        lastSig = sig
+      } catch {
+        // If stat fails, fall through and let snapshot capture details.
+      }
 
-      if (snapshot.statSig === lastSig) return
-      lastSig = snapshot.statSig
+      const snapshot = getReshadeFileSnapshot(filePath)
 
       const rw = snapshot.canReadWrite.ok ? 'ok' : `FAIL:${snapshot.canReadWrite.error ?? ''}`
 

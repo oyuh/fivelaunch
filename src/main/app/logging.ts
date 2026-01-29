@@ -24,6 +24,7 @@ export type AppLogStore = {
 }
 
 const APP_LOG_BUFFER_LIMIT = 800
+const APP_LOG_IPC_FLUSH_INTERVAL_MS = 50
 
 /**
  * Creates the log store.
@@ -32,7 +33,34 @@ const APP_LOG_BUFFER_LIMIT = 800
  */
 export function createAppLogStore(getMainWindow: () => BrowserWindow | null): AppLogStore {
   const buffer: AppLogEntry[] = []
+  const pendingIpc: AppLogEntry[] = []
+  let flushTimer: NodeJS.Timeout | null = null
   let seq = 0
+
+  const flushIpc = (): void => {
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    if (pendingIpc.length === 0) return
+
+    const win = getMainWindow()
+    if (win && !win.isDestroyed()) {
+      const batch = pendingIpc.splice(0)
+      try {
+        win.webContents.send('app-log-batch', batch)
+      } catch {
+        // ignore
+      }
+    } else {
+      pendingIpc.length = 0
+    }
+  }
+
+  const scheduleFlush = (): void => {
+    if (flushTimer) return
+    flushTimer = setTimeout(flushIpc, APP_LOG_IPC_FLUSH_INTERVAL_MS)
+  }
 
   const push = (level: AppLogLevel, args: unknown[]): void => {
     const message = formatUtil(...(args as any[]))
@@ -48,10 +76,13 @@ export function createAppLogStore(getMainWindow: () => BrowserWindow | null): Ap
       buffer.splice(0, buffer.length - APP_LOG_BUFFER_LIMIT)
     }
 
-    const win = getMainWindow()
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('app-log', entry)
+    pendingIpc.push(entry)
+    // Flush sooner for bursts.
+    if (pendingIpc.length >= 50) {
+      flushIpc()
+      return
     }
+    scheduleFlush()
   }
 
   const getLogs = () => buffer

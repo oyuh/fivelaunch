@@ -64,6 +64,30 @@ const stripWrappingQuotes = (s) => {
   return t
 }
 
+const getArgValue = (names) => {
+  const argv = process.argv.slice(2)
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    for (const name of names) {
+      if (arg === name) {
+        const next = argv[i + 1]
+        return next && !next.startsWith('-') ? next : ''
+      }
+      if (arg.startsWith(`${name}=`)) {
+        return arg.slice(name.length + 1)
+      }
+    }
+  }
+  return ''
+}
+
+const readMessageFromFile = (filePath) => {
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath)
+  const raw = fs.readFileSync(fullPath, 'utf8')
+  const text = raw.replace(/^\uFEFF/, '').trimEnd()
+  return { fullPath, message: text }
+}
+
 const readMultilineMessage = async (introPrompt) => {
   console.log(introPrompt)
   console.log('Enter your message. Finish by typing a line with just: """')
@@ -232,22 +256,53 @@ const main = async () => {
     console.log('\nStaged changes:\n' + cached)
 
     const commitDefault = `Release ${tag}`
-    let commitMessage = stripWrappingQuotes(
-      await ask('Commit message (Enter for default; type """ for multi-line; you can also use \\n)', {
-        defaultValue: commitDefault
-      })
-    )
+    const messageFileArg = stripWrappingQuotes(getArgValue(['--message-file', '--messageFile', '--msg-file', '-F', '--file']))
+    const defaultReleaseTxt = path.join(process.cwd(), 'release.txt')
 
-    if (commitMessage === '"""') {
-      commitMessage = await readMultilineMessage(
-        'Multi-line commit message mode\nTip: first line = subject, blank line, then body.'
-      )
-      if (!commitMessage.trim()) {
-        console.log('Empty commit message. Aborted.')
-        return
+    let commitMessage = ''
+    let commitMessageSource = ''
+    try {
+      if (messageFileArg) {
+        const { fullPath, message } = readMessageFromFile(messageFileArg)
+        if (message.trim()) {
+          commitMessage = message
+          commitMessageSource = fullPath
+        }
+      } else if (fs.existsSync(defaultReleaseTxt)) {
+        const { fullPath, message } = readMessageFromFile(defaultReleaseTxt)
+        if (message.trim()) {
+          commitMessage = message
+          commitMessageSource = fullPath
+        }
       }
+    } catch {
+      // ignore
+    }
+
+    if (commitMessageSource) {
+      console.log(`\nUsing commit message from file: ${path.relative(process.cwd(), commitMessageSource)}`)
     } else {
-      commitMessage = interpretBackslashEscapes(commitMessage)
+      commitMessage = stripWrappingQuotes(
+        await ask('Commit message (Enter for default; type """ for multi-line; you can also use \\n)', {
+          defaultValue: commitDefault
+        })
+      )
+
+      if (commitMessage === '"""') {
+        commitMessage = await readMultilineMessage(
+          'Multi-line commit message mode\nTip: first line = subject, blank line, then body.'
+        )
+        if (!commitMessage.trim()) {
+          console.log('Empty commit message. Aborted.')
+          return
+        }
+      } else {
+        commitMessage = interpretBackslashEscapes(commitMessage)
+      }
+    }
+
+    if (!commitMessage.trim()) {
+      commitMessage = commitDefault
     }
 
     const doCommit = await confirm(`Create commit now?`, { defaultYes: true })

@@ -16,7 +16,7 @@ import { startReShadeFileMonitor } from './gameManager/reshadeMonitor'
 import { RuntimeSync } from './gameManager/runtimeSync'
 import { linkFolder as linkFolderImpl } from './gameManager/linking'
 import { applyGtaSettings, startGtaSettingsEnforcement } from './gameManager/gtaSettings'
-import { isProcessRunning, spawnDetachedProcess } from './gameManager/processUtils'
+import { isProcessRunning, refreshProcessRunning, spawnDetachedProcess } from './gameManager/processUtils'
 import { setupPluginsForLaunch, type PluginsLaunchState } from './gameManager/pluginsLaunch'
 
 export class GameManager {
@@ -73,7 +73,11 @@ export class GameManager {
       statusCallback?.('Preparing launch...')
 
       // Check if GTA V or FiveM is already running
-      if (isProcessRunning('GTA5.exe') || isProcessRunning('FiveM.exe')) {
+      const [gtaRunning, fivemRunning] = await Promise.all([
+        refreshProcessRunning('GTA5.exe'),
+        refreshProcessRunning('FiveM.exe')
+      ])
+      if (gtaRunning || fivemRunning) {
         throw new Error('Please close GTA V and FiveM before launching a new client.')
       }
 

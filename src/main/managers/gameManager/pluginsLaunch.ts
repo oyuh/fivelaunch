@@ -2,7 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import {
   isSafeRuntimePluginFile,
-  mirrorFolderOneWay,
   mirrorFolderPreferNewestOneWayAsync,
   mirrorFolderSourceWinsOneWayAsync
 } from './pluginsMirror'
@@ -353,6 +352,7 @@ async function runPluginsSyncMode(params: {
   // Runtime: conservative background syncing of safe file types.
   try {
     let wasRunning = false
+    let inFlight = false
     const startedAt = Date.now()
     const durationMs = 21_600_000
     const intervalMs = 10_000
@@ -368,10 +368,16 @@ async function runPluginsSyncMode(params: {
           const running = keepSyncingWhileGameRuns()
           if (running) {
             wasRunning = true
+            if (inFlight) return
+            inFlight = true
             // Only sync safe files from game -> client while running.
-            mirrorFolderOneWay(gamePluginsDir, clientPluginsDir, {
+            void mirrorFolderPreferNewestOneWayAsync(gamePluginsDir, clientPluginsDir, {
               filterRel: (rel) => isSafeRuntimePluginFile(rel),
-              maxFiles: 350
+              maxFiles: 350,
+              yieldEvery: 150,
+              timeBudgetMs: 40
+            }).finally(() => {
+              inFlight = false
             })
             return
           }
