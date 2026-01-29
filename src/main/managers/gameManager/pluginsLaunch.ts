@@ -215,71 +215,6 @@ function prepareGamePluginsDirForSyncMode(
   writePluginsOwnerMarker(gamePluginsDir, { clientId, mode: 'sync' })
 }
 
-async function migrateExistingPluginsForJunctionAsync(
-  gamePluginsDir: string,
-  clientPluginsDir: string,
-  clientId: string,
-  statusCallback?: (status: string) => void
-): Promise<void> {
-  // Junction mode: migrate existing plugin files into the per-client folder BEFORE we take over
-  // with a junction link. We explicitly skip the heavy ReShade asset folders to keep this fast.
-  // Requested behavior: exclude `Shaders` and `Textures`, copy everything else.
-  let stats: fs.Stats
-  try {
-    stats = fs.lstatSync(gamePluginsDir)
-  } catch {
-    return
-  }
-
-  // If it's already a junction/symlink, there's nothing to migrate.
-  if (stats.isSymbolicLink()) return
-  if (!stats.isDirectory()) return
-
-  const markerFile = path.join(gamePluginsDir, '.managed-by-fivem-clients')
-  // If we previously managed it (copy/sync mode), avoid pulling from it here.
-  if (fs.existsSync(markerFile)) return
-
-  // If the plugins folder was previously used by another client in Copy/Sync mode,
-  // do NOT migrate it into this client (prevents cross-client leakage).
-  const owner = readPluginsOwnerMarker(gamePluginsDir)
-  if (owner && owner.clientId && owner.clientId !== clientId) {
-    statusCallback?.('Skipping plugins migration (belongs to another client).')
-    return
-  }
-
-  try {
-    fs.mkdirSync(clientPluginsDir, { recursive: true })
-  } catch {
-    // ignore
-  }
-
-  const isTopLevelShadersOrTexturesDir = (relDir: string) => {
-    // Only skip top-level plugins/Shaders and plugins/Textures.
-    // Do NOT skip nested folders like reshade-shaders/Shaders or reshade-shaders/Textures.
-    const normalized = relDir.replace(/\\/g, '/')
-    if (normalized.includes('/')) return false
-    const name = path.basename(relDir).toLowerCase()
-    return name === 'shaders' || name === 'textures'
-  }
-
-  statusCallback?.('Migrating existing plugins (excluding Shaders/Textures)...')
-  let lastProgressAt = 0
-
-  await mirrorFolderPreferNewestOneWayAsync(gamePluginsDir, clientPluginsDir, {
-    skipDirRel: isTopLevelShadersOrTexturesDir,
-    yieldEvery: 250,
-    // Guardrails: prevent pathological cases from blocking launch forever.
-    maxFiles: 150_000,
-    timeBudgetMs: 8_000,
-    onProgress: ({ processed, copied, skipped }) => {
-      const now = Date.now()
-      if (now - lastProgressAt < 650) return
-      lastProgressAt = now
-      statusCallback?.(`Migrating existing plugins... ${processed} scanned, ${copied} updated (${skipped} skipped)`)
-    }
-  })
-}
-
 async function runPluginsSyncMode(params: {
   state: PluginsLaunchState
   clientId: string
@@ -470,7 +405,6 @@ async function runPluginsJunctionMode(params: {
   const { clientId, clientPath, clientPluginsDir, gamePluginsDir, statusCallback, linkFolder, reshadeLog } = params
 
   statusCallback?.('Linking plugins...')
-  await migrateExistingPluginsForJunctionAsync(gamePluginsDir, clientPluginsDir, clientId, statusCallback)
 
   linkFolder(clientPluginsDir, gamePluginsDir, { migrateExisting: false })
 

@@ -268,14 +268,19 @@ function registerLaunchHandlers(deps: IpcDeps): void {
   ipcMain.handle('launch-client', async (event, id: string) => {
     try {
       const settings = (await managers.getSettingsManager()).getSettings()
-      if (settings.minimizeToTrayOnGameLaunch) {
-        deps.minimizeToTray()
-      }
 
       const cm = await managers.getClientManager()
       const gm = await managers.getGameManager()
       const client = cm.getClient(id)
       if (!client) throw new Error('Client not found.')
+
+      const isJunctionPluginsMode = Boolean(
+        client.linkOptions.plugins && (client.linkOptions.pluginsMode ?? 'sync') === 'junction'
+      )
+
+      if (settings.minimizeToTrayOnGameLaunch) {
+        deps.minimizeToTray()
+      }
 
       const statusCallback = (status: string) => {
         event.sender.send('launch-status', status)
@@ -283,7 +288,7 @@ function registerLaunchHandlers(deps: IpcDeps): void {
 
       await gm.launchClient(id, client.linkOptions, statusCallback)
 
-      if (settings.minimizeToTrayOnGameLaunch) {
+      if (settings.minimizeToTrayOnGameLaunch && !isJunctionPluginsMode) {
         startRestoreOnGameExit(event.sender)
       } else {
         stopWatcher()

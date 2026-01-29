@@ -72,6 +72,10 @@ export class GameManager {
     try {
       statusCallback?.('Preparing launch...')
 
+      const isJunctionPluginsMode = Boolean(
+        linkOptions.plugins && (linkOptions.pluginsMode ?? 'sync') === 'junction'
+      )
+
       // Check if GTA V or FiveM is already running
       const [gtaRunning, fivemRunning] = await Promise.all([
         refreshProcessRunning('GTA5.exe'),
@@ -110,18 +114,26 @@ export class GameManager {
       // Many ReShade installs write presets/config beside the executable instead of inside plugins.
       // This keeps client storage and the real install in sync while the app is open.
       try {
-        await runReshadeSync({
-          fiveMExe,
-          fiveMPath,
-          clientPath,
-          statusCallback,
-          isProcessRunning,
-          seedAndStartTwoWaySync: this.runtimeSync.seedAndStartTwoWaySync.bind(this.runtimeSync),
-          startReShadeFileMonitor: (dir, file, label, shouldContinue) =>
-            startReShadeFileMonitor(dir, file, label, shouldContinue, (d, m) => reshadeLog(d, m, statusCallback)),
-          fnv1a32Hex,
-          reshadeLog
-        })
+        if (!isJunctionPluginsMode) {
+          await runReshadeSync({
+            fiveMExe,
+            fiveMPath,
+            clientPath,
+            statusCallback,
+            isProcessRunning,
+            seedAndStartTwoWaySync: this.runtimeSync.seedAndStartTwoWaySync.bind(this.runtimeSync),
+            startReShadeFileMonitor: (dir, file, label, shouldContinue) =>
+              startReShadeFileMonitor(
+                dir,
+                file,
+                label,
+                shouldContinue,
+                (d, m) => reshadeLog(d, m, statusCallback)
+              ),
+            fnv1a32Hex,
+            reshadeLog
+          })
+        }
       } catch {
         // ignore
       }
@@ -163,8 +175,11 @@ export class GameManager {
           ensureFileExists(targetIni, '')
           // Seed the real INI from client at launch (client is the intentional source of truth)
           copyFileBestEffort(clientIni, targetIni)
-          // Keep edits in sync both ways while the app is open
-          this.runtimeSync.startTwoWayFileSync(clientIni, targetIni)
+          // Junction plugins mode: no background processes while the game is open.
+          if (!isJunctionPluginsMode) {
+            // Keep edits in sync both ways while the app is open
+            this.runtimeSync.startTwoWayFileSync(clientIni, targetIni)
+          }
         }
       }
 
@@ -172,7 +187,7 @@ export class GameManager {
       console.log('Folders linked. Launching FiveM...')
       spawnDetachedProcess(fiveMExe)
 
-      if (gtaSettings) {
+      if (gtaSettings && !isJunctionPluginsMode) {
         startGtaSettingsEnforcement(gtaSettings.source, gtaSettings.targets)
       }
 

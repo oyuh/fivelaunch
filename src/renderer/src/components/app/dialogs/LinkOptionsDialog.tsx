@@ -105,6 +105,13 @@ export function LinkOptionsDialog(props: LinkOptionsDialogProps): JSX.Element {
                     Junction (fast)
                   </button>
                 </div>
+
+                {client.linkOptions.pluginsMode === 'junction' && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Note: Junction mode is intentionally “dumb” — it only links folders. No background syncing/monitoring
+                    runs while the game is open (and minimize-on-launch won’t auto-restore).
+                  </div>
+                )}
               </div>
             )}
 
