@@ -1,6 +1,6 @@
 {
   "name": "fivelaunch",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "FiveLaunch - launch FiveM with select mods and settings",
   "main": "./out/main/index.js",
   "author": "Lawson Hart",
@@ -35,7 +35,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron-updater": "^6.7.3",
-    "fast-xml-parser": "^5.3.4",
+    "fast-xml-parser": "^5.3.5",
     "lucide-react": "^0.469.0",
     "tailwind-merge": "^2.6.1"
   },
@@ -45,7 +45,7 @@
     "@electron-toolkit/utils": "^3.0.0",
     "@swc/core": "^1.15.11",
     "@types/node": "^18.19.130",
-    "@types/react": "^18.3.27",
+    "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.24",
