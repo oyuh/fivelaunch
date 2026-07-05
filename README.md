@@ -45,7 +45,11 @@ Releases: https://github.com/oyuh/fivelaunch/releases
   - `gta5_settings.xml`
   - `CitizenFX.ini`
 - **Automatic backups** on first link (originals renamed with `_original`).
-- **Quick launch** from the UI with live progress.
+- **Quick launch** from the UI with live progress, or from **desktop
+  shortcuts** (`FiveLaunch.exe --launch-client=<id>`, single-instance safe).
+- **GTA V settings editor** with categorized, human-friendly controls.
+- **Minimize to tray** during play with automatic restore when the game exits.
+- **Update notifications** from GitHub releases (notify-only).
 - **Open client folder** directly from the app.
 - **Custom window controls** (minimize/maximize/close).
 

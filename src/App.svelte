@@ -10,7 +10,7 @@
   import { api } from './lib/api'
   import { formatBytes } from './lib/format'
   import { applyPrimaryHexToRoot, DEFAULT_PRIMARY_HEX } from './lib/theme'
-  import type { AppLogEntry, ClientProfile, ClientStats } from './lib/types'
+  import type { AppLogEntry, ClientProfile, ClientStats, UpdateStatus } from './lib/types'
 
   const FIRST_RUN_ACK_KEY = 'fivelaunch.firstRunAck'
 
@@ -37,9 +37,10 @@
   let gtaSettingsOpen = $state(false)
   let logsOpen = $state(false)
 
-  // Launch log store (fed by launch-status events)
+  // Log store: launch-status events + main-process logs (app-log events).
   let logs = $state<AppLogEntry[]>([])
   let logSeq = 0
+  let updateStatus = $state<UpdateStatus | null>(null)
 
   function pushLog(message: string): void {
     logSeq += 1
@@ -50,6 +51,21 @@
         : 'info'
     logs = [...logs, { id: logSeq, ts: Date.now(), level, message, source: 'launch' }]
     if (logs.length > 1000) logs = logs.slice(logs.length - 1000)
+  }
+
+  function pushMainLog(entry: { id: number; ts: number; level: AppLogEntry['level']; message: string }): void {
+    // Main-process ids are their own sequence; offset to keep keys unique.
+    logs = [...logs, { ...entry, id: entry.ts + entry.id, source: 'main' }]
+    if (logs.length > 1600) logs = logs.slice(logs.length - 1600)
+  }
+
+  async function clearLogs(): Promise<void> {
+    logs = []
+    try {
+      await api.clearAppLogs()
+    } catch {
+      // ignore
+    }
   }
 
   const filtered = $derived(
@@ -130,6 +146,23 @@
       .then((fn) => (unlistenFn = fn))
       .catch(() => {})
 
+    let unlistenAppLog: (() => void) | null = null
+    api
+      .onAppLog((entry) => pushMainLog(entry))
+      .then((fn) => (unlistenAppLog = fn))
+      .catch(() => {})
+
+    // Backfill main-process logs from before the UI was ready, then check
+    // for updates (notify-only, cached 15 minutes backend-side).
+    api
+      .getAppLogs()
+      .then((entries) => entries.forEach((e) => pushMainLog(e)))
+      .catch(() => {})
+    api
+      .getUpdateStatus()
+      .then((status) => (updateStatus = status))
+      .catch(() => {})
+
     const pollBusy = () => {
       api
         .getGameBusyState()
@@ -156,6 +189,7 @@
     return () => {
       clearInterval(busyTimer)
       unlistenFn?.()
+      unlistenAppLog?.()
     }
   })
 
@@ -452,7 +486,7 @@
 
   {#if logsOpen}
     <div class="px-4 pb-2">
-      <LogsPanel {logs} onClear={() => (logs = [])} />
+      <LogsPanel {logs} onClear={clearLogs} />
     </div>
   {/if}
 
@@ -481,6 +515,15 @@
       >
         Logs{logs.length ? ` (${logs.length})` : ''}
       </button>
+      {#if updateStatus?.isUpdateAvailable && updateStatus.latestUrl}
+        <button
+          class="rounded-full border border-primary/50 bg-primary/15 px-2 py-0.5 text-[10px] text-foreground transition-colors hover:bg-primary/25"
+          title="Open the release page"
+          onclick={() => updateStatus?.latestUrl && api.openUrl(updateStatus.latestUrl).catch(() => {})}
+        >
+          Update available: v{updateStatus.latestVersion}
+        </button>
+      {/if}
     </span>
     <span class="truncate pl-4 font-mono">
       {resolvedGamePath ?? 'FiveM not found — set the game path in settings'}

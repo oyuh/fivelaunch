@@ -91,6 +91,22 @@ function setupFakeBackend(): void {
         return null
       case 'list_client_mods':
         return ['gfx_pack/', 'sound.rpf']
+      case 'get_update_status':
+        return {
+          currentVersion: '2.0.0',
+          latestVersion: '2.5.0',
+          latestUrl: 'https://github.com/oyuh/fivelaunch/releases/tag/v2.5.0',
+          isUpdateAvailable: true,
+          checkedAt: Date.now(),
+          source: 'releases-latest'
+        }
+      case 'get_app_logs':
+        return [{ id: 1, ts: Date.now(), level: 'info', message: 'FiveLaunch v2.0.0 started' }]
+      case 'clear_app_logs':
+      case 'open_url':
+        return null
+      case 'create_client_shortcut':
+        return 'C:\\Users\\test\\Desktop\\FiveM - Main RP.lnk'
       case 'get_client_gta_settings':
         return {
           rootName: 'Settings',
@@ -288,6 +304,31 @@ describe('App shell', () => {
     })
     expect(await screen.findByText('gfx_pack/')).toBeInTheDocument()
     expect(screen.getByText('sound.rpf')).toBeInTheDocument()
+  })
+
+  it('shows the update badge and opens the release page', async () => {
+    render(App)
+
+    const badge = await screen.findByRole('button', { name: 'Update available: v2.5.0' })
+    await fireEvent.click(badge)
+
+    await waitFor(() => {
+      expect(called('open_url').at(-1)?.args.url).toBe(
+        'https://github.com/oyuh/fivelaunch/releases/tag/v2.5.0'
+      )
+    })
+  })
+
+  it('creates a desktop shortcut from client details', async () => {
+    render(App)
+    await fireEvent.click(await screen.findByText('Main RP'))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create Desktop Shortcut' }))
+    await waitFor(() => {
+      expect(called('create_client_shortcut').at(-1)?.args.id).toBe('id-main')
+    })
+    expect(await screen.findByText('Shortcut created!')).toBeInTheDocument()
   })
 
   it('shows the app version and resolved game path in the footer', async () => {

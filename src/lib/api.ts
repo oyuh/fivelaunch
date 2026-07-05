@@ -6,8 +6,17 @@ import type {
   ClientStats,
   GameBusyState,
   GtaSettingsDocument,
-  LinkOptions
+  LinkOptions,
+  UpdateStatus
 } from './types'
+
+/** Main-process log entry as emitted by Rust (source added client-side). */
+interface RawAppLogEntry {
+  id: number
+  ts: number
+  level: 'debug' | 'info' | 'warn' | 'error'
+  message: string
+}
 
 /**
  * Typed command bridge. Method names mirror v1's `window.api.*` so ported
@@ -47,6 +56,19 @@ export const api = {
   /** Subscribe to launch progress. Returns an unlisten function (async). */
   onLaunchStatus: (callback: (status: string) => void) =>
     listen<string>('launch-status', (event) => callback(event.payload)),
+
+  // Window
+  windowMinimize: () => invoke<void>('window_minimize'),
+
+  // Updates / logs / shortcuts
+  getUpdateStatus: () => invoke<UpdateStatus>('get_update_status'),
+  getAppLogs: () => invoke<RawAppLogEntry[]>('get_app_logs'),
+  clearAppLogs: () => invoke<void>('clear_app_logs'),
+  createClientShortcut: (id: string) => invoke<string>('create_client_shortcut', { id }),
+  openUrl: (url: string) => invoke<void>('open_url', { url }),
+  /** Subscribe to live main-process logs. Returns an unlisten function (async). */
+  onAppLog: (callback: (entry: RawAppLogEntry) => void) =>
+    listen<RawAppLogEntry>('app-log', (event) => callback(event.payload)),
 
   // GTA settings editor
   getClientGtaSettings: (id: string) =>

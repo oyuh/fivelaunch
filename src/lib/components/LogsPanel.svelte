@@ -9,6 +9,7 @@
     onClear: () => void
   } = $props()
 
+  let source = $state<AppLogEntry['source']>('launch')
   let query = $state('')
   let copied = $state(false)
   let scroller = $state<HTMLDivElement | null>(null)
@@ -17,8 +18,9 @@
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return logs
-    return logs.filter((l) => l.message.toLowerCase().includes(q))
+    const base = logs.filter((l) => l.source === source)
+    if (!q) return base
+    return base.filter((l) => l.message.toLowerCase().includes(q))
   })
 
   const rendered = $derived(
@@ -71,9 +73,31 @@
   <div class="flex flex-wrap items-center justify-between gap-2">
     <div>
       <h3 class="text-sm font-semibold">Logs</h3>
-      <p class="text-xs text-muted-foreground">Launch progress and status messages.</p>
+      <p class="text-xs text-muted-foreground">
+        {source === 'launch'
+          ? 'Launch progress and status messages.'
+          : 'Main-process application logs.'}
+      </p>
     </div>
     <div class="flex items-center gap-2">
+      <div class="flex items-center rounded-md border border-border bg-secondary/30 p-0.5">
+        <button
+          class="rounded px-2 py-0.5 text-xs transition-colors {source === 'launch'
+            ? 'bg-secondary text-foreground'
+            : 'text-muted-foreground hover:text-foreground'}"
+          onclick={() => (source = 'launch')}
+        >
+          Launch
+        </button>
+        <button
+          class="rounded px-2 py-0.5 text-xs transition-colors {source === 'main'
+            ? 'bg-secondary text-foreground'
+            : 'text-muted-foreground hover:text-foreground'}"
+          onclick={() => (source = 'main')}
+        >
+          App
+        </button>
+      </div>
       <input
         class="w-44 rounded-md border border-input bg-secondary/40 px-2 py-1 text-xs outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
         placeholder="Filter logs…"

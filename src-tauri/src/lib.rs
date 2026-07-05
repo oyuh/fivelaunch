@@ -1,5 +1,6 @@
 mod commands;
 pub mod core;
+mod tray;
 
 use commands::AppState;
 use core::paths::AppPaths;
@@ -14,18 +15,50 @@ pub fn run() {
     let _ = core::clients::ClientStore::new(&paths);
 
     let state = AppState::new(paths);
+    let log_store = state.log_store.clone();
 
     tauri::Builder::default()
+        // Must be first: a second instance forwards its argv here and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            tray::restore_from_tray(app);
+            if let Some(id) = core::args::get_launch_client_arg(&argv) {
+                log::info!("Second instance requested launch of client {id}");
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Err(err) = commands::run_launch_blocking(&app, &id) {
+                        log::error!("Shortcut launch error: {err}");
+                    }
+                });
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+        .setup(move |app| {
+            // Global logger: stderr + ring buffer + live `app-log` events.
+            let handle = app.handle().clone();
+            core::log_store::StoreLogger::install(
+                log_store.clone(),
+                Box::new(move |entry| {
+                    use tauri::Emitter;
+                    let _ = handle.emit("app-log", entry.clone());
+                }),
+            );
+            log::info!("FiveLaunch v{} started", app.package_info().version);
+
+            // Desktop shortcut launch: FiveLaunch.exe --launch-client=<id>
+            let argv: Vec<String> = std::env::args().collect();
+            if let Some(id) = core::args::get_launch_client_arg(&argv) {
+                log::info!("Auto-launching client {id} from command line");
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Small delay so the window is up first (v1: 750ms).
+                    std::thread::sleep(std::time::Duration::from_millis(750));
+                    if let Err(err) = commands::run_launch_blocking(&handle, &id) {
+                        log::error!("Auto-launch error: {err}");
+                    }
+                });
             }
+
             Ok(())
         })
         .manage(state)
@@ -56,6 +89,12 @@ pub fn run() {
             commands::save_client_gta_settings,
             commands::import_gta_settings_from_documents,
             commands::import_gta_settings_from_template,
+            commands::window_minimize,
+            commands::get_update_status,
+            commands::get_app_logs,
+            commands::clear_app_logs,
+            commands::create_client_shortcut,
+            commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

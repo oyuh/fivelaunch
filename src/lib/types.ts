@@ -53,6 +53,16 @@ export interface AppLogEntry {
   source: 'main' | 'launch'
 }
 
+export interface UpdateStatus {
+  currentVersion: string
+  latestVersion: string | null
+  latestUrl: string | null
+  isUpdateAvailable: boolean
+  checkedAt: number
+  source: 'releases-latest' | 'tags-latest' | 'error'
+  error?: string
+}
+
 export interface GtaSettingsDocument {
   rootName: string
   items: GtaSettingsItem[]

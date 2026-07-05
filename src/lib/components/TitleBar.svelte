@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
+  import { api } from '../api'
   import logo from '../../assets/logo.png'
 
   let {
@@ -39,7 +40,7 @@
     </button>
     <button
       class="flex h-full w-12 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-      onclick={() => appWindow.minimize()}
+      onclick={() => api.windowMinimize().catch(() => appWindow.minimize())}
       aria-label="Minimize"
     >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">

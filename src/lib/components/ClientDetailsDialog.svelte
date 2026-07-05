@@ -23,6 +23,18 @@
   let modsError = $state<string | null>(null)
   let confirmingDelete = $state(false)
   let error = $state<string | null>(null)
+  let shortcutFlash = $state(false)
+
+  async function createShortcut(): Promise<void> {
+    if (!client) return
+    try {
+      await api.createClientShortcut(client.id)
+      shortcutFlash = true
+      setTimeout(() => (shortcutFlash = false), 1500)
+    } catch (e) {
+      error = String(e)
+    }
+  }
 
   $effect(() => {
     if (!open || !client) return
@@ -160,11 +172,11 @@
           Open Client Folder
         </button>
         <button
-          class="cursor-not-allowed rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground/50"
-          title="Desktop shortcuts arrive in Phase 6"
-          disabled
+          class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          title="Creates a Desktop .lnk that launches this client directly"
+          onclick={createShortcut}
         >
-          Create Desktop Shortcut
+          {shortcutFlash ? 'Shortcut created!' : 'Create Desktop Shortcut'}
         </button>
       </div>
 
