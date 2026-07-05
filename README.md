@@ -9,9 +9,9 @@ FiveLaunch is a desktop launcher for **FiveM** that manages multiple isolated cl
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4-38BDF8?logo=tailwindcss&logoColor=white)
-![pnpm](https://img.shields.io/badge/pnpm-10+-F69220?logo=pnpm&logoColor=white)
+![Bun](https://img.shields.io/badge/Bun-1.x-FBF0DF?logo=bun&logoColor=black)
 
-Stack: **Tauri 2 (Rust) + Svelte 5 + TypeScript + Tailwind**.
+Stack: **Tauri 2 (Rust) + Svelte 5 + TypeScript + Tailwind + Bun**.
 
 Docs: https://fivelaunch.help
 Support: https://fivelaunch.help/support
@@ -104,26 +104,26 @@ Data is fully compatible with v1 — you can switch between versions freely.
 ## Development
 
 ### Prerequisites
-- **Node.js 20+** and **pnpm 10+**
+- **Bun 1.x**
 - **Rust (stable)** with the MSVC toolchain
 
 ### Run (Dev)
 ```powershell
-pnpm install
-pnpm tauri dev
+bun install
+bun run tauri dev
 ```
 
 ### Tests
 ```powershell
-pnpm test                     # frontend unit + UI component tests (vitest)
-pnpm check                    # svelte-check + tsc
+bun run test                  # frontend unit + UI component tests (vitest)
+bun run check                 # svelte-check + tsc
 cargo test   # from src-tauri/ — Rust unit + v1-compatibility tests
 cargo bench  # from src-tauri/ — criterion performance benches
 ```
 
 ### Build (Windows)
 ```powershell
-pnpm tauri build
+bun run tauri build
 ```
 
 Outputs:
