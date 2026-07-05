@@ -37,41 +37,55 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm check
 
-      - name: Build
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build frontend
         run: pnpm build
 
-      - name: Package Windows (portable + fast)
+      - name: Package Windows (tauri build)
         if: github.event_name == 'push'
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          pnpm exec electron-builder --config electron-builder.config.cjs --win portable
-          pnpm exec electron-builder --config electron-builder.config.cjs --win dir
-          node scripts/win-dist-fast.js
-          node scripts/zip-dist.js
+        run: pnpm tauri build
 
-      - name: Upload build artifacts (dev build)
-        if: github.event_name != 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: fivelaunch-build-output
-          path: |
-            dist/**
-            out/**
+      - name: Stage Windows artifacts
+        if: github.event_name == 'push'
+        run: |
+          New-Item -ItemType Directory -Force release-dist | Out-Null
+          Copy-Item src-tauri/target/release/fivelaunch.exe release-dist/FiveLaunch.exe
+          Copy-Item src-tauri/target/release/fivelaunch.exe release-dist/FiveLaunch-Portable.exe
+          Compress-Archive -Path release-dist/FiveLaunch.exe -DestinationPath release-dist/FiveLaunch-windows.zip -Force
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($setup) { Copy-Item $setup.FullName release-dist/FiveLaunch-Setup.exe }
+          Get-ChildItem release-dist | Format-Table -AutoSize
 
       - name: Upload Windows packaged artifacts
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: fivelaunch-windows
-          path: |
-            dist/FiveLaunch.exe
-            dist/FiveLaunch-Portable.exe
-            dist/FiveLaunch-windows.zip
-            dist/win-unpacked/**
+          path: release-dist/**
+
+      - name: Upload build artifacts (dev build)
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fivelaunch-build-output
+          path: dist/**

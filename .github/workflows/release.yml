@@ -41,29 +41,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build (vite + main)
-        run: pnpm build
+      - name: Typecheck
+        run: pnpm check
 
-      - name: Package Windows (portable then fast)
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Package Windows (tauri build)
+        run: pnpm tauri build
+
+      - name: Stage release assets
         run: |
-          pnpm exec electron-builder --config electron-builder.config.cjs --win portable
-          pnpm exec electron-builder --config electron-builder.config.cjs --win dir
-          node scripts/win-dist-fast.js
-
-      - name: Zip Windows dist
-        run: node scripts/zip-dist.js
-
-      - name: List dist outputs
-        run: |
-          echo "=== dist/ ==="
-          if (Test-Path dist) { Get-ChildItem -Force dist | Format-Table -AutoSize } else { throw "dist/ not found" }
-          echo "=== dist/win-unpacked/ ==="
-          if (Test-Path dist/win-unpacked) { Get-ChildItem -Force dist/win-unpacked | Format-Table -AutoSize } else { echo "(missing)" }
+          New-Item -ItemType Directory -Force release-dist | Out-Null
+          Copy-Item src-tauri/target/release/fivelaunch.exe release-dist/FiveLaunch.exe
+          Copy-Item src-tauri/target/release/fivelaunch.exe release-dist/FiveLaunch-Portable.exe
+          Compress-Archive -Path release-dist/FiveLaunch.exe -DestinationPath release-dist/FiveLaunch-windows.zip -Force
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($setup) { Copy-Item $setup.FullName release-dist/FiveLaunch-Setup.exe }
+          Get-ChildItem release-dist | Format-Table -AutoSize
 
       - name: Publish release asset
         env:
@@ -71,9 +81,12 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $assets = @(
-            "dist/FiveLaunch-Portable.exe",
-            "dist/FiveLaunch-windows.zip"
+            "release-dist/FiveLaunch-Portable.exe",
+            "release-dist/FiveLaunch-windows.zip"
           )
+          if (Test-Path release-dist/FiveLaunch-Setup.exe) {
+            $assets += "release-dist/FiveLaunch-Setup.exe"
+          }
 
           gh release view $tag | Out-Null
           if ($LASTEXITCODE -eq 0) {

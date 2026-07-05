@@ -1,29 +1,28 @@
-node_modules
-out
-dist
-.DS_Store
-
 # Logs
+logs
 *.log
 npm-debug.log*
-pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Env
-.env
-.env.*
+node_modules
+dist
+dist-ssr
+*.local
 
-# OS/Editor
-.vscode
-Thumbs.db
+v1
+PERF.md
+PLAN.md
 
-# Local release message helper (used by scripts/release.js)
-release.txt
-
-# Docs
-docs/
-
-# Ensure planning doc is tracked
-!plan.md
-/scripts/generate-win-icon.js
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
