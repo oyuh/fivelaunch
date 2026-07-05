@@ -26,18 +26,59 @@
   )
   const selected = $derived(clients.find((c) => c.id === selectedId) ?? null)
 
+  type LinkKey = 'mods' | 'plugins' | 'citizen' | 'gtaSettings' | 'citizenFxIni'
+
   const linkChips = $derived.by(() => {
     if (!selected) return []
     const o = selected.linkOptions
-    const chips: { label: string; on: boolean }[] = [
-      { label: 'Mods', on: o.mods },
-      { label: `Plugins${o.plugins ? ` (${o.pluginsMode ?? 'sync'})` : ''}`, on: o.plugins },
-      { label: 'Citizen', on: o.citizen },
-      { label: 'GTA settings', on: o.gtaSettings },
-      { label: 'CitizenFX.ini', on: o.citizenFxIni }
+    const chips: { key: LinkKey; label: string; on: boolean; hint: string }[] = [
+      { key: 'mods', label: 'Mods', on: o.mods, hint: 'Link the mods folder' },
+      {
+        key: 'plugins',
+        label: `Plugins${o.plugins ? ` (${o.pluginsMode ?? 'sync'})` : ''}`,
+        on: o.plugins,
+        hint: 'Click to cycle: off → sync (copy) → junction → off'
+      },
+      { key: 'citizen', label: 'Citizen', on: o.citizen, hint: 'Link the citizen folder (advanced)' },
+      {
+        key: 'gtaSettings',
+        label: 'GTA settings',
+        on: o.gtaSettings,
+        hint: 'Apply + enforce this client’s gta5_settings.xml'
+      },
+      {
+        key: 'citizenFxIni',
+        label: 'CitizenFX.ini',
+        on: o.citizenFxIni,
+        hint: 'Seed + sync this client’s CitizenFX.ini'
+      }
     ]
     return chips
   })
+
+  async function toggleLink(key: LinkKey): Promise<void> {
+    if (!selected) return
+    const o = { ...selected.linkOptions }
+    if (key === 'plugins') {
+      // Cycle: off -> sync (copy) -> junction -> off
+      if (!o.plugins) {
+        o.plugins = true
+        o.pluginsMode = 'sync'
+      } else if ((o.pluginsMode ?? 'sync') === 'sync') {
+        o.pluginsMode = 'junction'
+      } else {
+        o.plugins = false
+      }
+    } else {
+      o[key] = !o[key]
+    }
+    try {
+      await api.updateClientLinks(selected.id, o)
+      await refresh()
+    } catch (e) {
+      error = String(e)
+    }
+  }
 
   async function refresh(): Promise<void> {
     clients = await api.getClients()
@@ -297,14 +338,16 @@
             Linking
           </p>
           <div class="flex flex-wrap gap-2">
-            {#each linkChips as chip (chip.label)}
-              <span
-                class="rounded-full border px-3 py-1 text-xs {chip.on
-                  ? 'border-primary/50 bg-primary/15 text-foreground'
-                  : 'border-border text-muted-foreground'}"
+            {#each linkChips as chip (chip.key)}
+              <button
+                class="rounded-full border px-3 py-1 text-xs transition-colors {chip.on
+                  ? 'border-primary/50 bg-primary/15 text-foreground hover:bg-primary/25'
+                  : 'border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}"
+                title={chip.hint}
+                onclick={() => toggleLink(chip.key)}
               >
                 {chip.label}
-              </span>
+              </button>
             {/each}
           </div>
         </div>

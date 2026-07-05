@@ -3,28 +3,58 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::clients::{LinkOptions, PluginsMode};
+use super::file_sync::SyncPair;
+use super::gta_settings::{self, GtaEnforcementPlan};
 use super::linking::link_folder;
+use super::mirror::{copy_file_best_effort, ensure_file_exists};
 use super::paths::{self, AppPaths};
 use super::plugins_sync::{
     initial_sync_client_to_game, prepare_game_plugins_dir_for_sync_mode,
     write_plugins_owner_marker,
 };
+use super::reshade;
 use super::settings;
 
-/// External effects injected for testability.
+/// External effects injected for testability. Production values live in the
+/// command layer; tests substitute temp paths so no real user files are
+/// touched.
 pub struct LaunchDeps<'a> {
     /// Is GTA5.exe / FiveM.exe currently running?
     pub is_game_running: &'a dyn Fn() -> bool,
     /// Spawn the FiveM executable detached.
     pub spawn: &'a dyn Fn(&Path) -> io::Result<()>,
+    /// Resolve the GTA settings target files (real: `gta_settings_targets`).
+    pub gta_targets: &'a dyn Fn(Option<&str>) -> Vec<PathBuf>,
+    /// Resolve the real CitizenFX.ini path (real: `paths::citizen_fx_ini_path`).
+    pub citizen_fx_ini: &'a dyn Fn() -> Option<PathBuf>,
+}
+
+impl LaunchDeps<'_> {
+    /// Production wiring.
+    pub fn real() -> LaunchDeps<'static> {
+        LaunchDeps {
+            is_game_running: &super::process::is_game_running,
+            spawn: &|exe| super::process::spawn_detached(exe),
+            gta_targets: &|game_path_override| {
+                gta_settings::gta_settings_targets(game_path_override)
+            },
+            citizen_fx_ini: &paths::citizen_fx_ini_path,
+        }
+    }
 }
 
 /// Instructions for the caller after a successful launch.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LaunchOutcome {
     /// When set (plugins sync mode), the caller must run the runtime sync
     /// loop on a background thread for these directories.
     pub runtime_sync: Option<RuntimeSyncPlan>,
+    /// File pairs (client shadow <-> real file) for the runtime sync loop:
+    /// ReShade configs/presets + CitizenFX.ini. Empty in junction plugins
+    /// mode (v1: no background processes while the game is open).
+    pub file_sync_pairs: Vec<SyncPair>,
+    /// When set, run the GTA settings enforcement loop after spawn.
+    pub gta_enforcement: Option<GtaEnforcementPlan>,
 }
 
 #[derive(Debug)]
@@ -35,8 +65,10 @@ pub struct RuntimeSyncPlan {
 
 /// Launch pipeline — port of v1 `GameManager.launchClient`.
 ///
-/// Phase 3 state: mods/citizen links, plugins junction AND sync modes.
-/// Phase 4 adds: GTA settings apply/enforcement, CitizenFX.ini, ReShade.
+/// Order (same as v1): mods -> plugins -> ReShade discovery -> citizen ->
+/// GTA settings -> CitizenFX.ini -> spawn. Background work (plugins runtime
+/// sync, file sync loop, GTA enforcement) is returned in the outcome for the
+/// caller to run on threads.
 pub fn launch_client(
     app_paths: &AppPaths,
     client_id: &str,
@@ -62,7 +94,9 @@ pub fn launch_client(
         return Err("Please close GTA V and FiveM before launching a new client.".into());
     }
 
-    let mut outcome = LaunchOutcome { runtime_sync: None };
+    let mut outcome = LaunchOutcome::default();
+    let is_junction_plugins_mode =
+        link.plugins && link.plugins_mode.unwrap_or(PluginsMode::Sync) == PluginsMode::Junction;
 
     // 1. Mods
     if link.mods {
@@ -102,6 +136,14 @@ pub fn launch_client(
         }
     }
 
+    // ReShade: sync config/preset files that live outside the plugins folder
+    // (next to FiveM.exe, GTA dir, AppData). Junction mode runs no background
+    // processes, so discovery is skipped entirely (v1 behavior).
+    if !is_junction_plugins_mode {
+        let pairs = reshade::run_reshade_discovery(&five_m_exe, &five_m_path, &client_path, status);
+        outcome.file_sync_pairs.extend(pairs);
+    }
+
     // 3. Citizen — links even when the client folder is sparse, same as v1
     // (user-provided citizen files replace the game's; that's on the user).
     if link.citizen {
@@ -109,12 +151,35 @@ pub fn launch_client(
         link_folder(&client_path.join("citizen"), &five_m_path.join("citizen"), false)?;
     }
 
-    // 4/5. GTA settings + CitizenFX.ini land in Phase 4.
+    // 4. GTA settings — FiveM reads from BOTH CitizenFX AppData AND FiveM.app.
     if link.gta_settings {
-        status("Note: GTA settings apply is not ported yet (Phase 4) — skipped.");
+        let targets = (deps.gta_targets)(game_path_override.as_deref());
+        let plan = gta_settings::apply_gta_settings(&client_path, targets, status)?;
+        // Enforcement only when we're allowed background processes.
+        if !is_junction_plugins_mode {
+            outcome.gta_enforcement = Some(plan);
+        }
     }
+
+    // 5. CitizenFX.ini — seed the real INI from the client (client is the
+    // intentional source of truth), keep both in sync while the game runs.
     if link.citizen_fx_ini {
-        status("Note: CitizenFX.ini sync is not ported yet (Phase 4) — skipped.");
+        let client_ini = client_path.join("settings").join("CitizenFX.ini");
+        ensure_file_exists(&client_ini, "");
+        match (deps.citizen_fx_ini)() {
+            None => log::warn!("CitizenFX.ini target not found (APPDATA missing?)"),
+            Some(target_ini) => {
+                status("Syncing CitizenFX.ini...");
+                ensure_file_exists(&target_ini, "");
+                copy_file_best_effort(&client_ini, &target_ini);
+                if !is_junction_plugins_mode {
+                    outcome.file_sync_pairs.push(SyncPair {
+                        a: client_ini,
+                        b: target_ini,
+                    });
+                }
+            }
+        }
     }
 
     status("Starting FiveM...");
@@ -175,20 +240,27 @@ mod tests {
         }
     }
 
+    /// Test deps that never resolve real user paths.
+    macro_rules! test_deps {
+        ($spawned:ident) => {{
+            LaunchDeps {
+                is_game_running: &|| false,
+                spawn: &|exe: &Path| -> io::Result<()> {
+                    $spawned.borrow_mut().push(exe.to_path_buf());
+                    Ok(())
+                },
+                gta_targets: &|_| Vec::new(),
+                citizen_fx_ini: &|| None,
+            }
+        }};
+    }
+
     #[test]
     fn happy_path_junction_links_and_spawns() {
         let h = setup();
         let spawned = RefCell::new(Vec::<PathBuf>::new());
         let statuses = RefCell::new(Vec::<String>::new());
-        let not_running = || false;
-        let record_spawn = |exe: &Path| -> io::Result<()> {
-            spawned.borrow_mut().push(exe.to_path_buf());
-            Ok(())
-        };
-        let deps = LaunchDeps {
-            is_game_running: &not_running,
-            spawn: &record_spawn,
-        };
+        let deps = test_deps!(spawned);
 
         let outcome = launch_client(
             &h.app_paths,
@@ -201,6 +273,10 @@ mod tests {
         .unwrap();
 
         assert!(outcome.runtime_sync.is_none(), "junction mode has no runtime sync");
+        assert!(
+            outcome.file_sync_pairs.is_empty(),
+            "junction mode must not schedule background file sync"
+        );
         assert_eq!(spawned.borrow().len(), 1);
         assert!(spawned.borrow()[0].ends_with("FiveM.exe"));
 
@@ -235,15 +311,7 @@ mod tests {
     fn sync_mode_mirrors_plugins_and_requests_runtime_sync() {
         let h = setup();
         let spawned = RefCell::new(Vec::<PathBuf>::new());
-        let not_running = || false;
-        let record_spawn = |exe: &Path| -> io::Result<()> {
-            spawned.borrow_mut().push(exe.to_path_buf());
-            Ok(())
-        };
-        let deps = LaunchDeps {
-            is_game_running: &not_running,
-            spawn: &record_spawn,
-        };
+        let deps = test_deps!(spawned);
 
         // Client has a plugin; game plugins dir has foreign content that must
         // be isolated, not merged.
@@ -292,6 +360,114 @@ mod tests {
     }
 
     #[test]
+    fn phase4_gta_settings_and_citizenfx_ini() {
+        let h = setup();
+        let spawned = RefCell::new(Vec::<PathBuf>::new());
+
+        // Fake "real" targets inside the temp dir.
+        let roaming_xml = h.dir.path().join("roaming").join("gta5_settings.xml");
+        let app_xml = h.dir.path().join("FiveM").join("FiveM.app").join("settings.xml");
+        let real_ini = h.dir.path().join("roaming").join("CitizenFX.ini");
+        fs::create_dir_all(roaming_xml.parent().unwrap()).unwrap();
+
+        let targets = vec![roaming_xml.clone(), app_xml.clone()];
+        let ini = real_ini.clone();
+        let deps = LaunchDeps {
+            is_game_running: &|| false,
+            spawn: &|exe: &Path| -> io::Result<()> {
+                spawned.borrow_mut().push(exe.to_path_buf());
+                Ok(())
+            },
+            gta_targets: &move |_| targets.clone(),
+            citizen_fx_ini: &move || Some(ini.clone()),
+        };
+
+        // Client ini has content that must win over the real one.
+        let client_dir = h.app_paths.clients_data().join(&h.client_id);
+        fs::write(
+            client_dir.join("settings").join("CitizenFX.ini"),
+            "[Game]\nclient=1\n",
+        )
+        .unwrap();
+        fs::write(&real_ini, "[Game]\nstale=1\n").unwrap();
+
+        let mut link = link_all(PluginsMode::Sync);
+        link.gta_settings = true;
+        link.citizen_fx_ini = true;
+
+        let outcome = launch_client(
+            &h.app_paths,
+            &h.client_id,
+            &link,
+            &mut HashMap::new(),
+            &deps,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        // GTA settings applied to both targets (template fallback content).
+        let applied = fs::read_to_string(&roaming_xml).unwrap();
+        assert!(applied.contains("<Settings"));
+        assert_eq!(fs::read_to_string(&app_xml).unwrap(), applied);
+
+        // Enforcement plan returned (sync mode allows background work).
+        let plan = outcome.gta_enforcement.expect("enforcement plan expected");
+        assert_eq!(plan.targets, vec![roaming_xml, app_xml]);
+
+        // CitizenFX.ini seeded client -> real.
+        assert_eq!(fs::read_to_string(&real_ini).unwrap(), "[Game]\nclient=1\n");
+
+        // The ini pair is scheduled for runtime sync.
+        assert!(outcome
+            .file_sync_pairs
+            .iter()
+            .any(|p| p.b == real_ini && p.a.ends_with("CitizenFX.ini")));
+    }
+
+    #[test]
+    fn junction_mode_applies_settings_but_skips_background_work() {
+        let h = setup();
+        let spawned = RefCell::new(Vec::<PathBuf>::new());
+
+        let roaming_xml = h.dir.path().join("roaming").join("gta5_settings.xml");
+        let targets = vec![roaming_xml.clone()];
+        let real_ini = h.dir.path().join("roaming").join("CitizenFX.ini");
+        let ini = real_ini.clone();
+
+        let deps = LaunchDeps {
+            is_game_running: &|| false,
+            spawn: &|exe: &Path| -> io::Result<()> {
+                spawned.borrow_mut().push(exe.to_path_buf());
+                Ok(())
+            },
+            gta_targets: &move |_| targets.clone(),
+            citizen_fx_ini: &move || Some(ini.clone()),
+        };
+
+        let mut link = link_all(PluginsMode::Junction);
+        link.gta_settings = true;
+        link.citizen_fx_ini = true;
+
+        let outcome = launch_client(
+            &h.app_paths,
+            &h.client_id,
+            &link,
+            &mut HashMap::new(),
+            &deps,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        // Settings still applied once...
+        assert!(fs::read_to_string(&roaming_xml).unwrap().contains("<Settings"));
+        assert!(real_ini.exists());
+        // ...but no background enforcement or sync in junction mode.
+        assert!(outcome.gta_enforcement.is_none());
+        assert!(outcome.file_sync_pairs.is_empty());
+        assert!(outcome.runtime_sync.is_none());
+    }
+
+    #[test]
     fn refuses_when_game_running() {
         let h = setup();
         let spawned = Cell::new(0u32);
@@ -302,6 +478,8 @@ mod tests {
                 spawned.set(spawned.get() + 1);
                 Ok(())
             },
+            gta_targets: &|_| Vec::new(),
+            citizen_fx_ini: &|| None,
         };
 
         let err = launch_client(
@@ -324,6 +502,8 @@ mod tests {
         let deps = LaunchDeps {
             is_game_running: &|| false,
             spawn: &|_| Ok(()),
+            gta_targets: &|_| Vec::new(),
+            citizen_fx_ini: &|| None,
         };
 
         let err = launch_client(

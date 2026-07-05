@@ -1,6 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AppSettings, ClientProfile, ClientStats, GameBusyState, LinkOptions } from './types'
+import type {
+  AppSettings,
+  ClientProfile,
+  ClientStats,
+  GameBusyState,
+  GtaSettingsDocument,
+  LinkOptions
+} from './types'
 
 /**
  * Typed command bridge. Method names mirror v1's `window.api.*` so ported
@@ -40,6 +47,16 @@ export const api = {
   /** Subscribe to launch progress. Returns an unlisten function (async). */
   onLaunchStatus: (callback: (status: string) => void) =>
     listen<string>('launch-status', (event) => callback(event.payload)),
+
+  // GTA settings editor
+  getClientGtaSettings: (id: string) =>
+    invoke<GtaSettingsDocument>('get_client_gta_settings', { id }),
+  saveClientGtaSettings: (id: string, doc: GtaSettingsDocument) =>
+    invoke<void>('save_client_gta_settings', { id, doc }),
+  importGtaSettingsFromDocuments: (id: string) =>
+    invoke<GtaSettingsDocument>('import_gta_settings_from_documents', { id }),
+  importGtaSettingsFromTemplate: (id: string) =>
+    invoke<GtaSettingsDocument>('import_gta_settings_from_template', { id }),
 
   // App
   getAppVersion: () => invoke<string>('get_app_version')

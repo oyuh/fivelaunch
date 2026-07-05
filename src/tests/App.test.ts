@@ -68,6 +68,14 @@ function setupFakeBackend(): void {
       case 'delete_client':
         clients = clients.filter((c) => c.id !== args.id)
         return null
+      case 'update_client_links': {
+        clients = clients.map((c) =>
+          c.id === args.id
+            ? { ...c, linkOptions: args.linkOptions as ClientProfile['linkOptions'] }
+            : c
+        )
+        return null
+      }
       case 'rename_client': {
         clients = clients.map((c) =>
           c.id === args.id ? { ...c, name: String(args.name) } : c
@@ -159,6 +167,38 @@ describe('App shell', () => {
     })
     await waitFor(() => {
       expect(screen.queryByText('Main RP')).not.toBeInTheDocument()
+    })
+  })
+
+  it('toggles link options through the backend', async () => {
+    render(App)
+    await fireEvent.click(await screen.findByText('Main RP'))
+
+    // Boolean chip: Mods on -> off.
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mods' }))
+    await waitFor(() => {
+      const call = called('update_client_links').at(-1)
+      expect(call?.args.id).toBe('id-main')
+      expect((call?.args.linkOptions as { mods: boolean }).mods).toBe(false)
+    })
+
+    // Plugins chip cycles: on(sync) -> junction.
+    await fireEvent.click(await screen.findByRole('button', { name: 'Plugins (sync)' }))
+    await waitFor(() => {
+      const opts = called('update_client_links').at(-1)?.args.linkOptions as {
+        plugins: boolean
+        pluginsMode: string
+      }
+      expect(opts.plugins).toBe(true)
+      expect(opts.pluginsMode).toBe('junction')
+    })
+    expect(await screen.findByRole('button', { name: 'Plugins (junction)' })).toBeInTheDocument()
+
+    // junction -> off.
+    await fireEvent.click(screen.getByRole('button', { name: 'Plugins (junction)' }))
+    await waitFor(() => {
+      const opts = called('update_client_links').at(-1)?.args.linkOptions as { plugins: boolean }
+      expect(opts.plugins).toBe(false)
     })
   })
 

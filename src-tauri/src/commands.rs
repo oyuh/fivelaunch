@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::core::clients::{ClientProfile, ClientStore, LinkOptions};
+use crate::core::file_sync::BackgroundTask;
+use crate::core::gta_settings::GtaSettingsDocument;
 use crate::core::paths::{self, AppPaths};
 use crate::core::plugins_sync::RuntimeSyncHandle;
 use crate::core::settings::{self, AppSettings};
@@ -13,10 +15,35 @@ use crate::core::stats::ClientStats;
 /// on repeat launches within one app session.
 pub type MirrorCaches = HashMap<String, HashMap<String, f64>>;
 
+/// All background work owned by the current launch (v1 `RuntimeSync` +
+/// plugins bookkeeping). `stop_all` runs between launches.
+#[derive(Default)]
+pub struct LaunchRuntime {
+    pub plugins: Option<RuntimeSyncHandle>,
+    pub tasks: Vec<BackgroundTask>,
+}
+
+impl LaunchRuntime {
+    pub fn plugins_finalizing(&self) -> bool {
+        self.plugins
+            .as_ref()
+            .is_some_and(RuntimeSyncHandle::is_finalizing)
+    }
+
+    pub fn stop_all(&mut self) {
+        if let Some(mut plugins) = self.plugins.take() {
+            plugins.stop_and_join();
+        }
+        for mut task in self.tasks.drain(..) {
+            task.stop_and_join();
+        }
+    }
+}
+
 pub struct AppState {
     pub paths: AppPaths,
     pub mirror_caches: Arc<Mutex<MirrorCaches>>,
-    pub runtime_sync: Arc<Mutex<Option<RuntimeSyncHandle>>>,
+    pub runtime: Arc<Mutex<LaunchRuntime>>,
 }
 
 impl AppState {
@@ -24,7 +51,7 @@ impl AppState {
         Self {
             paths,
             mirror_caches: Arc::new(Mutex::new(HashMap::new())),
-            runtime_sync: Arc::new(Mutex::new(None)),
+            runtime: Arc::new(Mutex::new(LaunchRuntime::default())),
         }
     }
 }
@@ -226,7 +253,7 @@ pub async fn launch_client(
     let client = state.store()?.get_client(&id).ok_or("Client not found.")?;
     let paths = state.paths.clone();
     let caches = state.mirror_caches.clone();
-    let runtime = state.runtime_sync.clone();
+    let runtime = state.runtime.clone();
 
     // The pipeline does blocking filesystem work — keep it off the async runtime.
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
@@ -240,7 +267,7 @@ pub async fn launch_client(
         loop {
             let finalizing = runtime
                 .lock()
-                .map(|h| h.as_ref().is_some_and(RuntimeSyncHandle::is_finalizing))
+                .map(|r| r.plugins_finalizing())
                 .unwrap_or(false);
             if !finalizing {
                 break;
@@ -252,17 +279,12 @@ pub async fn launch_client(
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
 
-        // Stop any previous client's runtime sync before relinking.
+        // Stop ALL background work from the previous launch before relinking.
         if let Ok(mut guard) = runtime.lock() {
-            if let Some(mut handle) = guard.take() {
-                handle.stop_and_join();
-            }
+            guard.stop_all();
         }
 
-        let deps = crate::core::launch::LaunchDeps {
-            is_game_running: &crate::core::process::is_game_running,
-            spawn: &|exe| crate::core::process::spawn_detached(exe),
-        };
+        let deps = crate::core::launch::LaunchDeps::real();
 
         let outcome = {
             let mut caches = caches.lock().map_err(|e| e.to_string())?;
@@ -277,6 +299,8 @@ pub async fn launch_client(
             )?
         };
 
+        let mut new_runtime = LaunchRuntime::default();
+
         // Sync-mode plugins: keep syncing safe files while the game runs,
         // finalize after exit.
         if let Some(plan) = outcome.runtime_sync {
@@ -286,16 +310,43 @@ pub async fn launch_client(
                     let _ = app.emit("launch-status", message);
                 })
             };
-            let handle = crate::core::plugins_sync::spawn_runtime_sync(
+            new_runtime.plugins = Some(crate::core::plugins_sync::spawn_runtime_sync(
                 plan.game_plugins_dir,
                 plan.client_plugins_dir,
                 crate::core::plugins_sync::RuntimeSyncConfig::default(),
                 Arc::new(crate::core::process::is_game_running),
                 status_emitter,
-            );
-            if let Ok(mut guard) = runtime.lock() {
-                *guard = Some(handle);
-            }
+            ));
+        }
+
+        // ReShade shadow copies + CitizenFX.ini: prefer-newest loop while the
+        // game runs, final pass after exit.
+        if !outcome.file_sync_pairs.is_empty() {
+            let pairs = outcome.file_sync_pairs;
+            new_runtime.tasks.push(BackgroundTask::spawn(move |stop| {
+                crate::core::file_sync::run_prefer_newest_sync_loop(
+                    &pairs,
+                    &crate::core::file_sync::FileSyncConfig::default(),
+                    &crate::core::process::is_game_running,
+                    &stop,
+                );
+            }));
+        }
+
+        // GTA settings enforcement: fight FiveM's profile sync for a few
+        // minutes after spawn.
+        if let Some(plan) = outcome.gta_enforcement {
+            new_runtime.tasks.push(BackgroundTask::spawn(move |stop| {
+                crate::core::gta_settings::run_gta_settings_enforcement(
+                    &plan,
+                    &crate::core::gta_settings::EnforcementConfig::default(),
+                    &stop,
+                );
+            }));
+        }
+
+        if let Ok(mut guard) = runtime.lock() {
+            *guard = new_runtime;
         }
 
         Ok(())
@@ -319,11 +370,55 @@ pub struct GameBusyState {
 #[tauri::command]
 pub fn get_game_busy_state(state: State<'_, AppState>) -> GameBusyState {
     let busy = state
-        .runtime_sync
+        .runtime
         .lock()
-        .map(|h| h.as_ref().is_some_and(RuntimeSyncHandle::is_finalizing))
+        .map(|r| r.plugins_finalizing())
         .unwrap_or(false);
     GameBusyState {
         plugins_sync_busy: busy,
     }
+}
+
+// ---------------------------------------------------------------------------
+// GTA settings (editor UI)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_client_gta_settings(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<GtaSettingsDocument, String> {
+    Ok(crate::core::gta_settings::get_client_settings(
+        &state.paths.clients_data(),
+        &id,
+    ))
+}
+
+#[tauri::command]
+pub fn save_client_gta_settings(
+    state: State<'_, AppState>,
+    id: String,
+    doc: GtaSettingsDocument,
+) -> Result<(), String> {
+    crate::core::gta_settings::save_client_settings(&state.paths.clients_data(), &id, &doc)
+}
+
+#[tauri::command]
+pub fn import_gta_settings_from_documents(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<GtaSettingsDocument, String> {
+    crate::core::gta_settings::import_from_documents(
+        &state.paths.clients_data(),
+        &id,
+        state.game_path_override().as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn import_gta_settings_from_template(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<GtaSettingsDocument, String> {
+    crate::core::gta_settings::import_from_template(&state.paths.clients_data(), &id)
 }

@@ -52,6 +52,10 @@ pub fn run() {
             commands::launch_client,
             commands::is_game_running,
             commands::get_game_busy_state,
+            commands::get_client_gta_settings,
+            commands::save_client_gta_settings,
+            commands::import_gta_settings_from_documents,
+            commands::import_gta_settings_from_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

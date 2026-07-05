@@ -1,5 +1,5 @@
 // Shared data types — must stay in sync with the Rust core serde models
-// (v2/src-tauri/src/core/*.rs), which in turn mirror v1's on-disk formats.
+// (src-tauri/src/core/*.rs), which in turn mirror v1's on-disk formats.
 
 export interface ClientProfile {
   id: string
@@ -36,4 +36,14 @@ export interface AppSettings {
 
 export interface GameBusyState {
   pluginsSyncBusy: boolean
+}
+
+export interface GtaSettingsItem {
+  path: string
+  attributes: Record<string, string>
+}
+
+export interface GtaSettingsDocument {
+  rootName: string
+  items: GtaSettingsItem[]
 }
