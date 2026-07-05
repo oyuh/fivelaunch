@@ -43,6 +43,16 @@ export interface GtaSettingsItem {
   attributes: Record<string, string>
 }
 
+export type AppLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export interface AppLogEntry {
+  id: number
+  ts: number
+  level: AppLogLevel
+  message: string
+  source: 'main' | 'launch'
+}
+
 export interface GtaSettingsDocument {
   rootName: string
   items: GtaSettingsItem[]

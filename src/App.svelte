@@ -1,10 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import TitleBar from './lib/components/TitleBar.svelte'
+  import SettingsDialog from './lib/components/SettingsDialog.svelte'
+  import FirstRunDialog from './lib/components/FirstRunDialog.svelte'
+  import RefsDialog from './lib/components/RefsDialog.svelte'
+  import ClientDetailsDialog from './lib/components/ClientDetailsDialog.svelte'
+  import GtaSettingsDialog from './lib/components/GtaSettingsDialog.svelte'
+  import LogsPanel from './lib/components/LogsPanel.svelte'
   import { api } from './lib/api'
   import { formatBytes } from './lib/format'
   import { applyPrimaryHexToRoot, DEFAULT_PRIMARY_HEX } from './lib/theme'
-  import type { ClientProfile, ClientStats } from './lib/types'
+  import type { AppLogEntry, ClientProfile, ClientStats } from './lib/types'
+
+  const FIRST_RUN_ACK_KEY = 'fivelaunch.firstRunAck'
 
   let clients = $state<ClientProfile[]>([])
   let selectedId = $state<string | null>(null)
@@ -20,6 +28,29 @@
   let launching = $state(false)
   let launchStatus = $state<string | null>(null)
   let pluginsSyncBusy = $state(false)
+
+  // Dialogs / panels
+  let settingsOpen = $state(false)
+  let firstRunOpen = $state(false)
+  let refsOpen = $state(false)
+  let detailsOpen = $state(false)
+  let gtaSettingsOpen = $state(false)
+  let logsOpen = $state(false)
+
+  // Launch log store (fed by launch-status events)
+  let logs = $state<AppLogEntry[]>([])
+  let logSeq = 0
+
+  function pushLog(message: string): void {
+    logSeq += 1
+    const level: AppLogEntry['level'] = message.startsWith('WARNING')
+      ? 'warn'
+      : message.toLowerCase().includes('error') || message.toLowerCase().includes('failed')
+        ? 'error'
+        : 'info'
+    logs = [...logs, { id: logSeq, ts: Date.now(), level, message, source: 'launch' }]
+    if (logs.length > 1000) logs = logs.slice(logs.length - 1000)
+  }
 
   const filtered = $derived(
     clients.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
@@ -88,10 +119,13 @@
   }
 
   onMount(() => {
+    firstRunOpen = localStorage.getItem(FIRST_RUN_ACK_KEY) !== 'true'
+
     let unlistenFn: (() => void) | null = null
     api
       .onLaunchStatus((status) => {
         launchStatus = status
+        pushLog(status)
       })
       .then((fn) => (unlistenFn = fn))
       .catch(() => {})
@@ -201,10 +235,23 @@
     if (!ts) return 'Never'
     return new Date(ts).toLocaleString()
   }
+
+  function acknowledgeFirstRun(): void {
+    localStorage.setItem(FIRST_RUN_ACK_KEY, 'true')
+    firstRunOpen = false
+  }
+
+  async function refreshResolvedPath(): Promise<void> {
+    try {
+      resolvedGamePath = await api.getResolvedGamePath()
+    } catch {
+      // ignore
+    }
+  }
 </script>
 
 <div class="flex h-screen flex-col bg-background text-foreground">
-  <TitleBar />
+  <TitleBar {appVersion} onOpenSettings={() => (settingsOpen = true)} />
 
   <main class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4 p-4">
     <!-- Client list -->
@@ -355,16 +402,23 @@
         <div class="mt-auto flex flex-wrap gap-2 p-4">
           <button
             class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onclick={() => selected && api.openClientFolder(selected.id).catch((e) => (error = String(e)))}
+            onclick={() => (detailsOpen = true)}
           >
-            Open client folder
+            Details
           </button>
           <button
             class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onclick={() =>
-              selected && api.openClientPluginsFolder(selected.id).catch((e) => (error = String(e)))}
+            onclick={() => (gtaSettingsOpen = true)}
+            title="Edit this client's gta5_settings.xml"
           >
-            Open plugins folder
+            Edit GTA settings
+          </button>
+          <button
+            class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            onclick={() => (refsOpen = true)}
+            title="Quick links to useful folders"
+          >
+            Refs
           </button>
           <button
             class="ml-auto rounded-md bg-primary px-5 py-1.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
@@ -396,6 +450,12 @@
     </section>
   </main>
 
+  {#if logsOpen}
+    <div class="px-4 pb-2">
+      <LogsPanel {logs} onClear={() => (logs = [])} />
+    </div>
+  {/if}
+
   {#if error}
     <div class="mx-4 mb-2 rounded-md border border-destructive bg-destructive/20 px-3 py-2 text-sm">
       {error}
@@ -413,9 +473,23 @@
           plugins sync running
         </span>
       {/if}
+      <button
+        class="rounded px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground {logsOpen
+          ? 'text-foreground'
+          : ''}"
+        onclick={() => (logsOpen = !logsOpen)}
+      >
+        Logs{logs.length ? ` (${logs.length})` : ''}
+      </button>
     </span>
     <span class="truncate pl-4 font-mono">
       {resolvedGamePath ?? 'FiveM not found — set the game path in settings'}
     </span>
   </footer>
+
+  <SettingsDialog bind:open={settingsOpen} onSaved={refreshResolvedPath} />
+  <FirstRunDialog bind:open={firstRunOpen} onContinue={acknowledgeFirstRun} />
+  <RefsDialog bind:open={refsOpen} client={selected} />
+  <ClientDetailsDialog bind:open={detailsOpen} client={selected} {stats} onChanged={refresh} />
+  <GtaSettingsDialog bind:open={gtaSettingsOpen} clientId={selectedId} />
 </div>

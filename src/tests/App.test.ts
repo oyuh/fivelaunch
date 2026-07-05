@@ -84,6 +84,21 @@ function setupFakeBackend(): void {
       }
       case 'launch_client':
         return null
+      case 'set_game_path':
+      case 'set_theme_primary_hex':
+      case 'set_minimize_to_tray_on_game_launch':
+      case 'save_client_gta_settings':
+        return null
+      case 'list_client_mods':
+        return ['gfx_pack/', 'sound.rpf']
+      case 'get_client_gta_settings':
+        return {
+          rootName: 'Settings',
+          items: [
+            { path: 'Settings/graphics/Tessellation', attributes: { value: '1' } },
+            { path: 'Settings/video/ScreenWidth', attributes: { value: '2560' } }
+          ]
+        }
       default:
         throw new Error(`unmocked command: ${cmd}`)
     }
@@ -93,6 +108,8 @@ function setupFakeBackend(): void {
 const called = (cmd: string): InvokeCall[] => calls.filter((c) => c.cmd === cmd)
 
 beforeEach(() => {
+  // Suppress the first-run modal by default; the first-run test clears this.
+  localStorage.setItem('fivelaunch.firstRunAck', 'true')
   mockWindows('main')
   setupFakeBackend()
 })
@@ -200,6 +217,77 @@ describe('App shell', () => {
       const opts = called('update_client_links').at(-1)?.args.linkOptions as { plugins: boolean }
       expect(opts.plugins).toBe(false)
     })
+  })
+
+  it('shows the first-run dialog until acknowledged', async () => {
+    localStorage.removeItem('fivelaunch.firstRunAck')
+    render(App)
+
+    expect(await screen.findByText('Welcome to FiveLaunch')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'I Understand' }))
+    await waitFor(() => {
+      expect(screen.queryByText('Welcome to FiveLaunch')).not.toBeInTheDocument()
+    })
+    expect(localStorage.getItem('fivelaunch.firstRunAck')).toBe('true')
+  })
+
+  it('opens global settings from the titlebar and saves the game path', async () => {
+    render(App)
+    await screen.findByText('Main RP')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(await screen.findByText('Global Settings')).toBeInTheDocument()
+
+    const pathInput = screen.getByPlaceholderText('C:\\Users\\...\\AppData\\Local\\FiveM\\FiveM.app')
+    await fireEvent.input(pathInput, { target: { value: 'D:\\FiveM\\FiveM.app' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(called('set_game_path').at(-1)?.args.gamePath).toBe('D:\\FiveM\\FiveM.app')
+    })
+  })
+
+  it('edits and saves GTA settings through the editor', async () => {
+    render(App)
+    await fireEvent.click(await screen.findByText('Main RP'))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit GTA settings' }))
+
+    // Loads the client's document.
+    await waitFor(() => {
+      expect(called('get_client_gta_settings').at(-1)?.args.id).toBe('id-main')
+    })
+    expect(await screen.findByText('GTA V Settings Editor')).toBeInTheDocument()
+
+    // Tessellation is a mapped select with friendly labels.
+    const select = (await screen.findByDisplayValue('Normal')) as HTMLSelectElement
+    await fireEvent.change(select, { target: { value: '3' } })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => {
+      const saved = called('save_client_gta_settings').at(-1)
+      expect(saved?.args.id).toBe('id-main')
+      const doc = saved?.args.doc as {
+        items: { path: string; attributes: Record<string, string> }[]
+      }
+      const tess = doc.items.find((i) => i.path === 'Settings/graphics/Tessellation')
+      expect(tess?.attributes.value).toBe('3')
+      // Untouched values survive.
+      const width = doc.items.find((i) => i.path === 'Settings/video/ScreenWidth')
+      expect(width?.attributes.value).toBe('2560')
+    })
+  })
+
+  it('shows client details with the mods list', async () => {
+    render(App)
+    await fireEvent.click(await screen.findByText('Main RP'))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+
+    await waitFor(() => {
+      expect(called('list_client_mods').at(-1)?.args.id).toBe('id-main')
+    })
+    expect(await screen.findByText('gfx_pack/')).toBeInTheDocument()
+    expect(screen.getByText('sound.rpf')).toBeInTheDocument()
   })
 
   it('shows the app version and resolved game path in the footer', async () => {
