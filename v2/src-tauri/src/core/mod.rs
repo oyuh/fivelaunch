@@ -5,6 +5,10 @@
 //! See docs/rust-rewrite/README.md §4 for the compatibility contract.
 
 pub mod clients;
+pub mod fs_retry;
+pub mod launch;
+pub mod linking;
 pub mod paths;
+pub mod process;
 pub mod settings;
 pub mod stats;

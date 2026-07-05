@@ -28,14 +28,18 @@ Honest notes:
 - v2 idle also currently spans 6 WebView2 utility processes; this is fixed
   overhead that won't grow with app complexity.
 
-## v2 quality gates — Phase 1
+## v2 quality gates — Phase 2
 
 | Metric | v2 value | Notes |
 | --- | --- | --- |
-| Rust unit tests | **21 passing** | `cargo test` (~0.06s test run) |
+| Rust unit tests | **35 passing** | incl. launch pipeline with real junctions |
 | Frontend tests | **6 passing** | `pnpm test` (vitest, ~0.4s) |
 | svelte-check | 0 errors / 0 warnings | `pnpm check`, 152 files |
-| Vite production build | 629 ms | `pnpm build` |
+| Vite production build | ~1 s | `pnpm build` |
+
+Phase 2 perf note: the v1 exit-watcher + sync loops spawned `tasklist.exe`
+roughly every second while the game ran. v2's `core::process` uses native
+process enumeration (sysinfo) — zero subprocess spawns.
 
 ## How to run everything
 

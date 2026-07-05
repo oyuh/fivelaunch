@@ -190,3 +190,38 @@ pub async fn browse_game_path(app: tauri::AppHandle) -> Option<String> {
 pub fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
+
+// ---------------------------------------------------------------------------
+// Launch
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn launch_client(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let client = state.store()?.get_client(&id).ok_or("Client not found.")?;
+    let paths = state.paths.clone();
+
+    // The pipeline does blocking filesystem work — keep it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut status = |message: &str| {
+            let _ = app.emit("launch-status", message);
+        };
+        let deps = crate::core::launch::LaunchDeps {
+            is_game_running: &crate::core::process::is_game_running,
+            spawn: &|exe| crate::core::process::spawn_detached(exe),
+        };
+        crate::core::launch::launch_client(&paths, &id, &client.link_options, &deps, &mut status)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn is_game_running() -> bool {
+    crate::core::process::is_game_running()
+}

@@ -17,6 +17,8 @@
   let appVersion = $state('')
   let resolvedGamePath = $state<string | null>(null)
   let error = $state<string | null>(null)
+  let launching = $state(false)
+  let launchStatus = $state<string | null>(null)
 
   const filtered = $derived(
     clients.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
@@ -44,6 +46,10 @@
   }
 
   onMount(() => {
+    const unlisten = api.onLaunchStatus((status) => {
+      launchStatus = status
+    })
+
     void (async () => {
       try {
         const settings = await api.getSettings()
@@ -57,7 +63,25 @@
         error = String(e)
       }
     })()
+
+    return () => {
+      void unlisten.then((fn) => fn())
+    }
   })
+
+  async function launchSelected(): Promise<void> {
+    if (!selected || launching) return
+    launching = true
+    launchStatus = 'Preparing launch...'
+    try {
+      await api.launchClient(selected.id)
+    } catch (e) {
+      error = String(e)
+      launchStatus = null
+    } finally {
+      launching = false
+    }
+  }
 
   $effect(() => {
     const id = selectedId
@@ -285,13 +309,30 @@
             Open plugins folder
           </button>
           <button
-            class="ml-auto cursor-not-allowed rounded-md bg-primary/40 px-5 py-1.5 text-sm font-semibold text-primary-foreground/60"
-            title="Launch pipeline lands in Phase 2"
-            disabled
+            class="ml-auto rounded-md bg-primary px-5 py-1.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={launching}
+            onclick={launchSelected}
           >
-            Launch (soon)
+            {launching ? 'Launching…' : 'Launch'}
           </button>
         </div>
+
+        {#if launchStatus}
+          <div class="flex items-center gap-2 border-t border-border px-4 py-2">
+            {#if launching}
+              <span
+                class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-muted border-t-primary"
+              ></span>
+            {/if}
+            <p
+              class="truncate text-xs {launchStatus.startsWith('WARNING')
+                ? 'text-destructive-foreground'
+                : 'text-muted-foreground'}"
+            >
+              {launchStatus}
+            </p>
+          </div>
+        {/if}
       {/if}
     </section>
   </main>

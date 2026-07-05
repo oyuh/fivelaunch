@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import type { AppSettings, ClientProfile, ClientStats, LinkOptions } from './types'
 
 /**
@@ -31,6 +32,13 @@ export const api = {
   setThemePrimaryHex: (hex: string | null) => invoke<void>('set_theme_primary_hex', { hex }),
   getResolvedGamePath: () => invoke<string | null>('get_resolved_game_path'),
   browseGamePath: () => invoke<string | null>('browse_game_path'),
+
+  // Launch
+  launchClient: (id: string) => invoke<void>('launch_client', { id }),
+  isGameRunning: () => invoke<boolean>('is_game_running'),
+  /** Subscribe to launch progress. Returns an unlisten function (async). */
+  onLaunchStatus: (callback: (status: string) => void) =>
+    listen<string>('launch-status', (event) => callback(event.payload)),
 
   // App
   getAppVersion: () => invoke<string>('get_app_version')

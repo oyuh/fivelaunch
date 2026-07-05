@@ -35,7 +35,9 @@ pnpm tauri build   # release build + NSIS bundle (src-tauri/target/release/)
 
 - [x] Phase 0/1 — scaffold, theme port, Rust core (paths/settings/clients/stats),
       typed command bridge, client list UI, tests + benches
-- [ ] Phase 2 — linking engine + launch pipeline (junction, backups, spawn, process watch)
+- [x] Phase 2 — linking engine + launch pipeline (junction/backups/retry, sysinfo
+      process checks, detached spawn, launch-status events, Launch button).
+      Plugins **sync mode** intentionally deferred to Phase 3 (launch warns).
 - [ ] Phase 3 — plugins sync + runtime sync engines
 - [ ] Phase 4 — GTA settings XML + CitizenFX.ini + ReShade sync
 - [ ] Phase 5 — full UI port (dialogs, logs panel, settings, GTA settings editor)
