@@ -6,6 +6,7 @@
   import RefsDialog from './lib/components/RefsDialog.svelte'
   import ClientDetailsDialog from './lib/components/ClientDetailsDialog.svelte'
   import GtaSettingsDialog from './lib/components/GtaSettingsDialog.svelte'
+  import HistoryDialog from './lib/components/HistoryDialog.svelte'
   import LogsPanel from './lib/components/LogsPanel.svelte'
   import { api } from './lib/api'
   import { formatBytes } from './lib/format'
@@ -35,6 +36,7 @@
   let refsOpen = $state(false)
   let detailsOpen = $state(false)
   let gtaSettingsOpen = $state(false)
+  let historyOpen = $state(false)
   let logsOpen = $state(false)
 
   // Log store: launch-status events + main-process logs (app-log events).
@@ -515,6 +517,13 @@
       >
         Logs{logs.length ? ` (${logs.length})` : ''}
       </button>
+      <button
+        class="rounded px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
+        title="Backups moved out of FiveM.app live here"
+        onclick={() => (historyOpen = true)}
+      >
+        History
+      </button>
       {#if updateStatus?.isUpdateAvailable && updateStatus.latestUrl}
         <button
           class="rounded-full border border-primary/50 bg-primary/15 px-2 py-0.5 text-[10px] text-foreground transition-colors hover:bg-primary/25"
@@ -535,4 +544,5 @@
   <RefsDialog bind:open={refsOpen} client={selected} />
   <ClientDetailsDialog bind:open={detailsOpen} client={selected} {stats} onChanged={refresh} />
   <GtaSettingsDialog bind:open={gtaSettingsOpen} clientId={selectedId} />
+  <HistoryDialog bind:open={historyOpen} />
 </div>

@@ -53,6 +53,16 @@ export interface AppLogEntry {
   source: 'main' | 'launch'
 }
 
+export interface BackupEntry {
+  name: string
+  path: string
+  kind: string
+  createdMs: number
+  isDir: boolean
+  totalBytes: number
+  fileCount: number
+}
+
 export interface UpdateStatus {
   currentVersion: string
   latestVersion: string | null

@@ -19,6 +19,7 @@ type InvokeCall = { cmd: string; args: Record<string, unknown> }
 
 let calls: InvokeCall[] = []
 let clients: ClientProfile[] = []
+let backups: Array<Record<string, unknown>> = []
 
 function makeClient(id: string, name: string): ClientProfile {
   return {
@@ -39,6 +40,17 @@ function makeClient(id: string, name: string): ClientProfile {
 function setupFakeBackend(): void {
   calls = []
   clients = [makeClient('id-main', 'Main RP'), makeClient('id-drift', 'Drift Server')]
+  backups = [
+    {
+      name: 'mods_1751700000000',
+      path: 'C:\\Users\\test\\AppData\\Roaming\\FiveLaunch\\backups\\mods_1751700000000',
+      kind: 'mods',
+      createdMs: 1751700000000,
+      isDir: true,
+      totalBytes: 4096,
+      fileCount: 12
+    }
+  ]
 
   mockIPC((cmd, payload) => {
     const args = (payload ?? {}) as Record<string, unknown>
@@ -107,6 +119,13 @@ function setupFakeBackend(): void {
         return null
       case 'create_client_shortcut':
         return 'C:\\Users\\test\\Desktop\\FiveM - Main RP.lnk'
+      case 'list_backups':
+        return backups
+      case 'delete_backup':
+        backups = backups.filter((b) => b.name !== args.name)
+        return null
+      case 'open_backups_folder':
+        return null
       case 'get_client_gta_settings':
         return {
           rootName: 'Settings',
@@ -329,6 +348,25 @@ describe('App shell', () => {
       expect(called('create_client_shortcut').at(-1)?.args.id).toBe('id-main')
     })
     expect(await screen.findByText('Shortcut created!')).toBeInTheDocument()
+  })
+
+  it('lists and deletes backups in the History dialog', async () => {
+    render(App)
+    await screen.findByText('Main RP')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    expect(await screen.findByText('Backup History')).toBeInTheDocument()
+    expect(await screen.findByText('mods')).toBeInTheDocument()
+    expect(screen.getByText(/12 files/)).toBeInTheDocument()
+
+    // Two-step delete: first click arms, second click deletes via backend.
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(called('delete_backup')).toHaveLength(0)
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete?' }))
+    await waitFor(() => {
+      expect(called('delete_backup').at(-1)?.args.name).toBe('mods_1751700000000')
+    })
+    expect(await screen.findByText(/No backups yet/)).toBeInTheDocument()
   })
 
   it('shows the app version and resolved game path in the footer', async () => {

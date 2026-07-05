@@ -11,9 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use super::fs_retry::rename_with_retry;
 use super::hash::fnv1a32_hex;
 use super::mirror::{
     is_safe_runtime_plugin_file, mirror_folder_prefer_newest_one_way,
@@ -37,9 +36,10 @@ pub fn plugins_owner_marker_path(dir: &Path) -> PathBuf {
     dir.join(".fivelaunch-plugins-owner.json")
 }
 
-pub fn managed_marker_path(dir: &Path) -> PathBuf {
-    dir.join(".managed-by-fivem-clients")
-}
+/// v1 wrote a second `.managed-by-fivem-clients` marker next to the owner
+/// JSON. v2 treats the owner marker as the single management signal and
+/// deletes the legacy file when found.
+pub const LEGACY_MANAGED_MARKER: &str = ".managed-by-fivem-clients";
 
 pub fn write_plugins_owner_marker(dir: &Path, client_id: &str, mode: &str) {
     let _ = fs::create_dir_all(dir);
@@ -100,71 +100,53 @@ pub fn save_mirror_cache(path: &Path, cache: &HashMap<String, f64>) {
 // Game plugins dir isolation
 // ---------------------------------------------------------------------------
 
-fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
-}
-
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut s = path.as_os_str().to_os_string();
-    s.push(suffix);
-    PathBuf::from(s)
-}
-
 /// Make `FiveM.app/plugins` a real directory owned by `client_id`.
 ///
-/// Port of v1 `prepareGamePluginsDirForSyncMode`:
+/// v1 semantics with a cleaner disk footprint:
 /// - a leftover junction is removed
-/// - a directory that isn't ours, or is owned by another client, is rotated
-///   away to `plugins_managed_<fnv>_backup_<ts>` / `plugins_unmanaged_backup_<ts>`
-///   (prevents cross-client plugin leakage)
-/// - ownership markers are always (re)stamped
+/// - a directory that isn't ours (no owner marker), or is owned by another
+///   client, is MOVED into the central backup store — cross-client isolation
+///   without littering FiveM.app with `_backup_<ts>` siblings
+/// - the owner marker is always (re)stamped; v1's legacy
+///   `.managed-by-fivem-clients` marker is deleted when found
 pub fn prepare_game_plugins_dir_for_sync_mode(
     game_plugins_dir: &Path,
     client_id: &str,
+    backups_dir: &Path,
     status: &mut dyn FnMut(&str),
 ) -> Result<(), String> {
     if let Ok(meta) = fs::symlink_metadata(game_plugins_dir) {
         if meta.file_type().is_symlink() {
             let _ = fs::remove_dir(game_plugins_dir).or_else(|_| fs::remove_file(game_plugins_dir));
         } else if meta.is_dir() {
-            let managed = managed_marker_path(game_plugins_dir).exists();
             let owner_id = read_plugins_owner_marker(game_plugins_dir).map(|m| m.client_id);
+            let legacy_managed = game_plugins_dir.join(LEGACY_MANAGED_MARKER).exists();
+            let managed = owner_id.is_some() || legacy_managed;
 
-            let ours = managed && owner_id.as_deref() == Some(client_id);
+            let ours = owner_id.as_deref() == Some(client_id);
             if !ours {
                 let kind = if managed {
                     let tag = owner_id
                         .as_deref()
                         .map_or_else(|| "unknown".to_string(), fnv1a32_hex);
-                    format!("managed_{tag}")
+                    format!("plugins_managed_{tag}")
                 } else {
-                    "unmanaged".to_string()
+                    "plugins_unmanaged".to_string()
                 };
-                let backup = with_suffix(game_plugins_dir, &format!("_{kind}_backup_{}", now_ms()));
 
                 status("Isolating FiveM plugins folder for this client...");
-                rename_with_retry(game_plugins_dir, &backup).map_err(|err| {
-                    format!(
-                        "Failed to isolate plugins folder (code={}): {}. Close FiveM/overlays and try again.",
-                        err.raw_os_error().map_or_else(|| "unknown".into(), |c| c.to_string()),
-                        game_plugins_dir.display()
-                    )
-                })?;
+                super::backups::move_into_backups(backups_dir, game_plugins_dir, &kind)?;
             }
         } else {
-            // Unexpected file at the plugins path; move it aside (best effort).
-            let _ = fs::rename(
-                game_plugins_dir,
-                with_suffix(game_plugins_dir, &format!("_backup_{}", now_ms())),
-            );
+            // Unexpected file at the plugins path; move it into the store.
+            let _ =
+                super::backups::move_into_backups(backups_dir, game_plugins_dir, "plugins_file");
         }
     }
 
     let _ = fs::create_dir_all(game_plugins_dir);
-    let _ = fs::write(managed_marker_path(game_plugins_dir), "managed\n");
+    // Clean up v1's extra marker if present; the owner JSON is the signal now.
+    let _ = fs::remove_file(game_plugins_dir.join(LEGACY_MANAGED_MARKER));
     write_plugins_owner_marker(game_plugins_dir, client_id, "sync");
     Ok(())
 }
@@ -382,70 +364,90 @@ mod tests {
     }
 
     #[test]
-    fn prepare_rotates_unmanaged_dir() {
+    fn prepare_moves_unmanaged_dir_into_store() {
         let dir = tempfile::tempdir().unwrap();
         let plugins = dir.path().join("plugins");
+        let store = dir.path().join("store");
         fs::create_dir_all(&plugins).unwrap();
         fs::write(plugins.join("user.dll"), b"precious user plugin").unwrap();
 
-        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &mut |_| {}).unwrap();
+        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &store, &mut |_| {}).unwrap();
 
-        // Original content rotated away, not deleted.
-        let backups: Vec<_> = fs::read_dir(dir.path())
+        // Original content moved into the central store, not deleted, and
+        // no `_backup_` siblings next to the game folder.
+        let entries = crate::core::backups::list_backups(&store);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "plugins_unmanaged");
+        assert!(PathBuf::from(&entries[0].path).join("user.dll").exists());
+        let rotated_siblings = fs::read_dir(dir.path())
             .unwrap()
             .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.starts_with("plugins_unmanaged_backup_"))
-            .collect();
-        assert_eq!(backups.len(), 1);
-        assert!(dir
-            .path()
-            .join(&backups[0])
-            .join("user.dll")
-            .exists());
+            .filter(|e| e.file_name().to_string_lossy().starts_with("plugins_"))
+            .count();
+        assert_eq!(rotated_siblings, 0, "no _backup_ siblings next to the game folder");
+        assert!(plugins.is_dir(), "fresh plugins dir must exist in place");
 
-        // Fresh managed dir with both markers.
-        assert!(managed_marker_path(&plugins).exists());
+        // Fresh dir stamped with the owner marker ONLY (no legacy marker).
         let owner = read_plugins_owner_marker(&plugins).unwrap();
         assert_eq!(owner.client_id, "client-a");
         assert_eq!(owner.mode, "sync");
+        assert!(!plugins.join(LEGACY_MANAGED_MARKER).exists());
     }
 
     #[test]
-    fn prepare_rotates_other_clients_dir_with_hash_tag() {
+    fn prepare_moves_other_clients_dir_with_hash_tag() {
         let dir = tempfile::tempdir().unwrap();
         let plugins = dir.path().join("plugins");
+        let store = dir.path().join("store");
         fs::create_dir_all(&plugins).unwrap();
-        fs::write(managed_marker_path(&plugins), "managed\n").unwrap();
         write_plugins_owner_marker(&plugins, "client-b", "sync");
 
-        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &mut |_| {}).unwrap();
+        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &store, &mut |_| {}).unwrap();
 
-        let expected_tag = fnv1a32_hex("client-b");
-        let backups: Vec<_> = fs::read_dir(dir.path())
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.starts_with(&format!("plugins_managed_{expected_tag}_backup_")))
-            .collect();
-        assert_eq!(backups.len(), 1, "other client's dir must rotate with its hash tag");
+        let expected_kind = format!("plugins_managed_{}", fnv1a32_hex("client-b"));
+        let entries = crate::core::backups::list_backups(&store);
+        assert_eq!(entries.len(), 1, "other client's dir must move to the store");
+        assert_eq!(entries[0].kind, expected_kind);
         assert_eq!(read_plugins_owner_marker(&plugins).unwrap().client_id, "client-a");
     }
 
     #[test]
-    fn prepare_keeps_own_dir() {
+    fn prepare_keeps_own_dir_and_removes_legacy_marker() {
         let dir = tempfile::tempdir().unwrap();
         let plugins = dir.path().join("plugins");
+        let store = dir.path().join("store");
         fs::create_dir_all(&plugins).unwrap();
         fs::write(plugins.join("mine.dll"), b"keep me").unwrap();
-        fs::write(managed_marker_path(&plugins), "managed\n").unwrap();
+        // v1-era state: both markers present.
+        fs::write(plugins.join(LEGACY_MANAGED_MARKER), "managed\n").unwrap();
         write_plugins_owner_marker(&plugins, "client-a", "sync");
 
-        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &mut |_| {}).unwrap();
+        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &store, &mut |_| {}).unwrap();
 
         assert!(plugins.join("mine.dll").exists(), "own dir must be kept in place");
-        let rotated = fs::read_dir(dir.path()).unwrap().count();
-        assert_eq!(rotated, 1, "no backup rotation for our own dir");
+        assert!(crate::core::backups::list_backups(&store).is_empty());
+        assert!(
+            !plugins.join(LEGACY_MANAGED_MARKER).exists(),
+            "legacy v1 marker must be cleaned up"
+        );
+        assert!(plugins_owner_marker_path(&plugins).exists());
+    }
+
+    #[test]
+    fn prepare_moves_legacy_managed_dir_without_owner_as_managed() {
+        // v1 could leave a dir with ONLY the legacy marker (owner JSON came
+        // later); it must rotate as managed/unknown, not unmanaged.
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = dir.path().join("plugins");
+        let store = dir.path().join("store");
+        fs::create_dir_all(&plugins).unwrap();
+        fs::write(plugins.join(LEGACY_MANAGED_MARKER), "managed\n").unwrap();
+
+        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &store, &mut |_| {}).unwrap();
+
+        let entries = crate::core::backups::list_backups(&store);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "plugins_managed_unknown");
     }
 
     #[test]
@@ -454,13 +456,14 @@ mod tests {
         let somewhere = dir.path().join("somewhere");
         fs::create_dir_all(&somewhere).unwrap();
         let plugins = dir.path().join("plugins");
+        let store = dir.path().join("store");
         junction::create(&somewhere, &plugins).unwrap();
 
-        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &mut |_| {}).unwrap();
+        prepare_game_plugins_dir_for_sync_mode(&plugins, "client-a", &store, &mut |_| {}).unwrap();
 
         let meta = fs::symlink_metadata(&plugins).unwrap();
         assert!(!meta.file_type().is_symlink(), "junction must be replaced by a real dir");
-        assert!(managed_marker_path(&plugins).exists());
+        assert!(plugins_owner_marker_path(&plugins).exists());
     }
 
     #[test]

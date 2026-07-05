@@ -5,6 +5,7 @@
 //! See PLAN.md §4 for the compatibility contract.
 
 pub mod args;
+pub mod backups;
 pub mod clients;
 pub mod file_sync;
 pub mod fs_retry;

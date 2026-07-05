@@ -95,6 +95,9 @@ pub fn run() {
             commands::clear_app_logs,
             commands::create_client_shortcut,
             commands::open_url,
+            commands::list_backups,
+            commands::open_backups_folder,
+            commands::delete_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

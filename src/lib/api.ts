@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
   AppSettings,
+  BackupEntry,
   ClientProfile,
   ClientStats,
   GameBusyState,
@@ -59,6 +60,11 @@ export const api = {
 
   // Window
   windowMinimize: () => invoke<void>('window_minimize'),
+
+  // Backup history (central store in %APPDATA%\FiveLaunch\backups)
+  listBackups: () => invoke<BackupEntry[]>('list_backups'),
+  openBackupsFolder: () => invoke<void>('open_backups_folder'),
+  deleteBackup: (name: string) => invoke<void>('delete_backup', { name }),
 
   // Updates / logs / shortcuts
   getUpdateStatus: () => invoke<UpdateStatus>('get_update_status'),

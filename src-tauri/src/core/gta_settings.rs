@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use super::mirror::copy_file_best_effort;
 use super::paths;
@@ -453,8 +453,9 @@ pub fn gta_settings_targets(game_path_override: Option<&str>) -> Vec<PathBuf> {
     targets
 }
 
-/// v1 `replaceFile`: backup, clear read-only, delete, copy, fsync.
-fn replace_file(source: &Path, target: &Path) -> Result<(), String> {
+/// v1 `replaceFile` semantics, but the pre-overwrite backup goes to the
+/// central store instead of a `.backup` sibling.
+fn replace_file(source: &Path, target: &Path, backups_dir: &Path) -> Result<(), String> {
     if !source.exists() {
         return Err(format!(
             "Settings file not found: {}. Please save settings first.",
@@ -470,8 +471,11 @@ fn replace_file(source: &Path, target: &Path) -> Result<(), String> {
             perms.set_readonly(false);
             let _ = fs::set_permissions(target, perms);
         }
-        let backup = PathBuf::from(format!("{}.backup", target.display()));
-        let _ = fs::copy(target, backup);
+        let kind = target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "settings".into());
+        let _ = super::backups::copy_into_backups(backups_dir, target, &kind);
         let _ = fs::remove_file(target);
     }
 
@@ -492,32 +496,29 @@ pub struct GtaEnforcementPlan {
     pub targets: Vec<PathBuf>,
 }
 
-/// Apply the client's settings to every target (with `.backup` copies) and
-/// neutralize `fivem_sdk.cfg`. Returns the enforcement plan to run after the
-/// game spawns.
+/// Apply the client's settings to every target (originals preserved in the
+/// central backup store) and neutralize `fivem_sdk.cfg`. Returns the
+/// enforcement plan to run after the game spawns.
 pub fn apply_gta_settings(
     client_path: &Path,
     targets: Vec<PathBuf>,
+    backups_dir: &Path,
     status: &mut dyn FnMut(&str),
 ) -> Result<GtaEnforcementPlan, String> {
     status("Applying GTA settings...");
     let source = ensure_client_gta_settings_file(client_path)?;
 
-    // fivem_sdk.cfg carries profile console variables that override the XML.
+    // fivem_sdk.cfg carries profile console variables that override the XML —
+    // move it into the store rather than leaving a .backup_<ts> sibling.
     if let Some(citizen_dir) = paths::citizen_fx_dir() {
         let sdk_cfg = citizen_dir.join("fivem_sdk.cfg");
         if sdk_cfg.exists() {
-            let ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let backup = citizen_dir.join(format!("fivem_sdk.cfg.backup_{ms}"));
-            let _ = fs::rename(&sdk_cfg, backup);
+            let _ = super::backups::move_into_backups(backups_dir, &sdk_cfg, "fivem_sdk.cfg");
         }
     }
 
     for target in &targets {
-        replace_file(&source, target)?;
+        replace_file(&source, target, backups_dir)?;
     }
 
     Ok(GtaEnforcementPlan { source, targets })
@@ -757,9 +758,10 @@ mod tests {
     }
 
     #[test]
-    fn apply_writes_targets_with_backups() {
+    fn apply_writes_targets_and_backs_up_into_store() {
         let dir = tempfile::tempdir().unwrap();
         let client = dir.path().join("client");
+        let store = dir.path().join("backups");
         let target_a = dir.path().join("roaming").join("gta5_settings.xml");
         let target_b = dir.path().join("FiveM.app").join("settings.xml");
         fs::create_dir_all(target_a.parent().unwrap()).unwrap();
@@ -768,6 +770,7 @@ mod tests {
         let plan = apply_gta_settings(
             &client,
             vec![target_a.clone(), target_b.clone()],
+            &store,
             &mut |_| {},
         )
         .unwrap();
@@ -776,9 +779,16 @@ mod tests {
         let applied = fs::read_to_string(&target_a).unwrap();
         assert!(applied.contains("<Settings"));
         assert_eq!(fs::read_to_string(&target_b).unwrap(), applied);
-        assert!(
-            PathBuf::from(format!("{}.backup", target_a.display())).exists(),
-            ".backup of the original must exist"
+
+        // No `.backup` sibling next to the target...
+        assert!(!PathBuf::from(format!("{}.backup", target_a.display())).exists());
+        // ...the original content lives in the central store instead.
+        let entries = crate::core::backups::list_backups(&store);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "gta5_settings.xml");
+        assert_eq!(
+            fs::read_to_string(&entries[0].path).unwrap(),
+            "old-content-that-should-be-backed-up"
         );
     }
 

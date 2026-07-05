@@ -98,10 +98,19 @@ pub fn launch_client(
     let is_junction_plugins_mode =
         link.plugins && link.plugins_mode.unwrap_or(PluginsMode::Sync) == PluginsMode::Junction;
 
+    // Everything moved aside lands in the central backup store (History
+    // dialog) — FiveM.app stays clean.
+    let backups_dir = super::backups::backups_root(app_paths);
+
     // 1. Mods
     if link.mods {
         status("Linking mods...");
-        link_folder(&client_path.join("mods"), &five_m_path.join("mods"), false)?;
+        link_folder(
+            &client_path.join("mods"),
+            &five_m_path.join("mods"),
+            &backups_dir,
+            false,
+        )?;
     }
 
     // 2. Plugins
@@ -112,13 +121,18 @@ pub fn launch_client(
         match link.plugins_mode.unwrap_or(PluginsMode::Sync) {
             PluginsMode::Junction => {
                 status("Linking plugins...");
-                link_folder(&client_plugins, &game_plugins, false)?;
+                link_folder(&client_plugins, &game_plugins, &backups_dir, false)?;
                 write_plugins_owner_marker(&client_plugins, client_id, "junction");
                 status("Note: Plugins are linked (junction). ReShade may open the client plugins folder.");
             }
             PluginsMode::Sync => {
                 std::fs::create_dir_all(&client_plugins).map_err(|e| e.to_string())?;
-                prepare_game_plugins_dir_for_sync_mode(&game_plugins, client_id, status)?;
+                prepare_game_plugins_dir_for_sync_mode(
+                    &game_plugins,
+                    client_id,
+                    &backups_dir,
+                    status,
+                )?;
                 initial_sync_client_to_game(
                     client_id,
                     &client_path,
@@ -148,13 +162,18 @@ pub fn launch_client(
     // (user-provided citizen files replace the game's; that's on the user).
     if link.citizen {
         status("Linking citizen...");
-        link_folder(&client_path.join("citizen"), &five_m_path.join("citizen"), false)?;
+        link_folder(
+            &client_path.join("citizen"),
+            &five_m_path.join("citizen"),
+            &backups_dir,
+            false,
+        )?;
     }
 
     // 4. GTA settings — FiveM reads from BOTH CitizenFX AppData AND FiveM.app.
     if link.gta_settings {
         let targets = (deps.gta_targets)(game_path_override.as_deref());
-        let plan = gta_settings::apply_gta_settings(&client_path, targets, status)?;
+        let plan = gta_settings::apply_gta_settings(&client_path, targets, &backups_dir, status)?;
         // Enforcement only when we're allowed background processes.
         if !is_junction_plugins_mode {
             outcome.gta_enforcement = Some(plan);
@@ -280,13 +299,21 @@ mod tests {
         assert_eq!(spawned.borrow().len(), 1);
         assert!(spawned.borrow()[0].ends_with("FiveM.exe"));
 
-        // mods junction in place, original backed up
+        // mods junction in place; original moved to the CENTRAL store, and
+        // no `_original` sibling dirtying FiveM.app.
         let fivem_app = h.dir.path().join("FiveM").join("FiveM.app");
         assert!(fs::symlink_metadata(fivem_app.join("mods"))
             .unwrap()
             .file_type()
             .is_symlink());
-        assert!(fivem_app.join("mods_original").join("stock.rpf").exists());
+        assert!(!fivem_app.join("mods_original").exists());
+        let store = crate::core::backups::backups_root(&h.app_paths);
+        let backups = crate::core::backups::list_backups(&store);
+        assert_eq!(backups.len(), 1);
+        assert_eq!(backups[0].kind, "mods");
+        assert!(std::path::PathBuf::from(&backups[0].path)
+            .join("stock.rpf")
+            .exists());
 
         // plugins junction + owner marker
         assert!(fs::symlink_metadata(fivem_app.join("plugins"))

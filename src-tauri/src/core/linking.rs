@@ -1,21 +1,7 @@
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
-use super::fs_retry::rename_with_retry;
-
-fn now_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
-}
-
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut s = path.as_os_str().to_os_string();
-    s.push(suffix);
-    PathBuf::from(s)
-}
+use super::backups::move_into_backups;
 
 /// Merge files from `from_dir` into `to_dir` without overwriting existing
 /// files. Port of v1 `mergeFolderContents` — used as a non-destructive
@@ -58,14 +44,18 @@ fn merge_folder_contents(from_dir: &Path, to_dir: &Path) {
 
 /// Replace a real directory at `target` with a junction pointing at `source`.
 ///
-/// Port of v1 `linkFolder`:
 /// - ensures `source` exists
 /// - an existing link at `target` is removed
-/// - an existing real directory is renamed to `{target}_original` (first
-///   time) or `{target}_backup_{timestamp}` (when a backup already exists)
+/// - an existing real directory is MOVED into the central backup store
+///   (`backups_dir`) instead of being renamed in place — FiveM.app stays clean
 /// - with `migrate_existing`, game-side files are merged into `source`
 ///   (non-destructively) before the takeover
-pub fn link_folder(source: &Path, target: &Path, migrate_existing: bool) -> Result<(), String> {
+pub fn link_folder(
+    source: &Path,
+    target: &Path,
+    backups_dir: &Path,
+    migrate_existing: bool,
+) -> Result<(), String> {
     if !source.exists() {
         fs::create_dir_all(source).map_err(|e| e.to_string())?;
     }
@@ -76,33 +66,16 @@ pub fn link_folder(source: &Path, target: &Path, migrate_existing: bool) -> Resu
             fs::remove_dir(target)
                 .or_else(|_| fs::remove_file(target))
                 .map_err(|e| format!("Failed to remove existing link {}: {e}", target.display()))?;
-        } else if meta.is_dir() {
-            if migrate_existing {
+        } else {
+            if meta.is_dir() && migrate_existing {
                 merge_folder_contents(target, source);
             }
 
-            let backup_path = with_suffix(target, "_original");
-            if !backup_path.exists() {
-                rename_with_retry(target, &backup_path).map_err(|err| {
-                    format!(
-                        "Failed to back up existing folder (code={}): {}. Close FiveM/any overlays and try again.",
-                        err.raw_os_error().map_or_else(|| "unknown".into(), |c| c.to_string()),
-                        target.display()
-                    )
-                })?;
-            } else {
-                let unique = with_suffix(target, &format!("_backup_{}", now_ms()));
-                rename_with_retry(target, &unique).map_err(|err| {
-                    format!(
-                        "Failed to move existing folder aside (code={}): {}. Close FiveM/any overlays and try again.",
-                        err.raw_os_error().map_or_else(|| "unknown".into(), |c| c.to_string()),
-                        target.display()
-                    )
-                })?;
-            }
-        } else {
-            // Unexpected file at the target path; move it aside (best effort).
-            let _ = fs::rename(target, with_suffix(target, &format!("_backup_{}", now_ms())));
+            let kind = target
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "folder".to_string());
+            move_into_backups(backups_dir, target, &kind)?;
         }
     }
 
@@ -119,55 +92,72 @@ pub fn link_folder(source: &Path, target: &Path, migrate_existing: bool) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::backups::list_backups;
 
     #[test]
     fn creates_junction_when_target_missing() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("client_mods");
         let target = dir.path().join("game_mods");
+        let store = dir.path().join("backups");
 
-        link_folder(&source, &target, false).unwrap();
+        link_folder(&source, &target, &store, false).unwrap();
 
         assert!(source.is_dir(), "source must be created");
         // Write through the junction, read from the source.
         fs::write(target.join("test.txt"), b"via-junction").unwrap();
         assert_eq!(fs::read(source.join("test.txt")).unwrap(), b"via-junction");
+        assert!(list_backups(&store).is_empty(), "nothing to back up");
     }
 
     #[test]
-    fn backs_up_existing_directory_as_original() {
+    fn moves_existing_directory_into_central_store() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("client_mods");
         let target = dir.path().join("game_mods");
+        let store = dir.path().join("backups");
         fs::create_dir_all(&target).unwrap();
         fs::write(target.join("orig.txt"), b"original data").unwrap();
 
-        link_folder(&source, &target, false).unwrap();
+        link_folder(&source, &target, &store, false).unwrap();
 
-        let backup = dir.path().join("game_mods_original");
-        assert!(backup.is_dir(), "_original backup must exist");
-        assert_eq!(fs::read(backup.join("orig.txt")).unwrap(), b"original data");
-        // Target is now a junction to source.
+        // Target is now a junction to source; NO siblings left behind.
         assert!(fs::symlink_metadata(&target).unwrap().file_type().is_symlink());
-    }
-
-    #[test]
-    fn rotates_to_timestamped_backup_when_original_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("client_mods");
-        let target = dir.path().join("game_mods");
-        fs::create_dir_all(&target).unwrap();
-        fs::create_dir_all(dir.path().join("game_mods_original")).unwrap();
-
-        link_folder(&source, &target, false).unwrap();
-
-        let backups: Vec<_> = fs::read_dir(dir.path())
+        let siblings: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.starts_with("game_mods_backup_"))
+            .filter(|n| n.starts_with("game_mods_"))
             .collect();
-        assert_eq!(backups.len(), 1, "expected one timestamped backup");
+        assert!(siblings.is_empty(), "no in-place backups: {siblings:?}");
+
+        // The original content lives in the central store.
+        let entries = list_backups(&store);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, "game_mods");
+        let backup_path = std::path::PathBuf::from(&entries[0].path);
+        assert_eq!(fs::read(backup_path.join("orig.txt")).unwrap(), b"original data");
+    }
+
+    #[test]
+    fn repeated_links_stack_backups_in_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("client_mods");
+        let target = dir.path().join("game_mods");
+        let store = dir.path().join("backups");
+
+        for i in 0..2 {
+            // A real dir shows up at the target again (e.g., game update).
+            if fs::symlink_metadata(&target).is_ok() {
+                fs::remove_dir(&target).unwrap();
+            }
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join(format!("gen{i}.txt")), b"x").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            link_folder(&source, &target, &store, false).unwrap();
+        }
+
+        assert_eq!(list_backups(&store).len(), 2, "each rotation gets its own entry");
     }
 
     #[test]
@@ -176,13 +166,15 @@ mod tests {
         let old_source = dir.path().join("old_client");
         let new_source = dir.path().join("new_client");
         let target = dir.path().join("game_mods");
+        let store = dir.path().join("backups");
 
-        link_folder(&old_source, &target, false).unwrap();
-        link_folder(&new_source, &target, false).unwrap();
+        link_folder(&old_source, &target, &store, false).unwrap();
+        link_folder(&new_source, &target, &store, false).unwrap();
 
         fs::write(target.join("x.txt"), b"new").unwrap();
         assert!(new_source.join("x.txt").exists());
         assert!(!old_source.join("x.txt").exists());
+        assert!(list_backups(&store).is_empty(), "links are never backed up");
     }
 
     #[test]
@@ -190,13 +182,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("client_plugins");
         let target = dir.path().join("game_plugins");
+        let store = dir.path().join("backups");
         fs::create_dir_all(&source).unwrap();
         fs::create_dir_all(target.join("sub")).unwrap();
         fs::write(source.join("keep.ini"), b"client wins").unwrap();
         fs::write(target.join("keep.ini"), b"game version").unwrap();
         fs::write(target.join("sub").join("preset.ini"), b"game preset").unwrap();
 
-        link_folder(&source, &target, true).unwrap();
+        link_folder(&source, &target, &store, true).unwrap();
 
         // Existing client file NOT overwritten; new game file merged in.
         assert_eq!(fs::read(source.join("keep.ini")).unwrap(), b"client wins");

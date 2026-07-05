@@ -294,6 +294,7 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
     // v1 hides the window before linking begins.
     if minimize_to_tray {
         crate::tray::minimize_to_tray(app);
+        crate::tray::set_tray_status(Some(&format!("Launching {}…", client.name)));
     }
 
     let deps = crate::core::launch::LaunchDeps::real();
@@ -316,6 +317,7 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
         Err(err) => {
             // v1: restore the window so the user sees the error.
             crate::tray::restore_from_tray(app);
+            crate::tray::set_tray_status(None);
             return Err(err);
         }
     };
@@ -367,13 +369,19 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
     }
 
     // Restore from tray when the game exits (v1 startRestoreOnGameExit).
+    // The watcher also keeps the tray status line fresh ("Playing X — N min").
     // Junction plugins mode runs no background processes while the game is
     // open, so the user restores manually via the tray.
-    if minimize_to_tray && !is_junction_plugins_mode {
-        let app = app.clone();
-        new_runtime.tasks.push(BackgroundTask::spawn(move |stop| {
-            restore_on_game_exit(&app, &stop);
-        }));
+    if minimize_to_tray {
+        if is_junction_plugins_mode {
+            crate::tray::set_tray_status(Some(&format!("Playing {}", client.name)));
+        } else {
+            let app = app.clone();
+            let client_name = client.name.clone();
+            new_runtime.tasks.push(BackgroundTask::spawn(move |stop| {
+                restore_on_game_exit(&app, &client_name, &stop);
+            }));
+        }
     }
 
     if let Ok(mut guard) = runtime.lock() {
@@ -384,12 +392,18 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
 }
 
 /// Wait for the game to appear (60s grace) and then exit; restore the window.
-fn restore_on_game_exit(app: &tauri::AppHandle, stop: &std::sync::atomic::AtomicBool) {
+/// While the game runs, keeps the tray status line updated with the client
+/// name and elapsed play time.
+fn restore_on_game_exit(
+    app: &tauri::AppHandle,
+    client_name: &str,
+    stop: &std::sync::atomic::AtomicBool,
+) {
     use std::sync::atomic::Ordering;
     use tauri::Emitter;
 
     let started = std::time::Instant::now();
-    let mut seen_running = false;
+    let mut playing_since: Option<std::time::Instant> = None;
 
     loop {
         if stop.load(Ordering::SeqCst) {
@@ -397,16 +411,32 @@ fn restore_on_game_exit(app: &tauri::AppHandle, stop: &std::sync::atomic::Atomic
         }
 
         let running = crate::core::process::is_game_running();
-        if !seen_running {
-            if running {
-                seen_running = true;
-            } else if started.elapsed() > std::time::Duration::from_secs(60) {
-                return; // game never started; give up quietly (v1 behavior)
+        match playing_since {
+            None => {
+                if running {
+                    playing_since = Some(std::time::Instant::now());
+                } else if started.elapsed() > std::time::Duration::from_secs(60) {
+                    // Game never started; give up quietly (v1 behavior).
+                    crate::tray::set_tray_status(None);
+                    return;
+                }
             }
-        } else if !running {
-            crate::tray::restore_from_tray(app);
-            let _ = app.emit("launch-status", "Game closed.");
-            return;
+            Some(since) => {
+                if running {
+                    let mins = since.elapsed().as_secs() / 60;
+                    let text = if mins < 1 {
+                        format!("Playing {client_name} — just started")
+                    } else {
+                        format!("Playing {client_name} — {mins} min")
+                    };
+                    crate::tray::set_tray_status(Some(&text));
+                } else {
+                    crate::tray::set_tray_status(None);
+                    crate::tray::restore_from_tray(app);
+                    let _ = app.emit("launch-status", "Game closed.");
+                    return;
+                }
+            }
         }
 
         // ~1s tick, responsive to stop.
@@ -417,6 +447,27 @@ fn restore_on_game_exit(app: &tauri::AppHandle, stop: &std::sync::atomic::Atomic
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Backup history
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_backups(state: State<'_, AppState>) -> Vec<crate::core::backups::BackupEntry> {
+    crate::core::backups::list_backups(&crate::core::backups::backups_root(&state.paths))
+}
+
+#[tauri::command]
+pub fn open_backups_folder(state: State<'_, AppState>) -> Result<(), String> {
+    let dir = crate::core::backups::backups_root(&state.paths);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open_in_explorer(dir)
+}
+
+#[tauri::command]
+pub fn delete_backup(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    crate::core::backups::delete_backup(&crate::core::backups::backups_root(&state.paths), &name)
 }
 
 #[tauri::command]
