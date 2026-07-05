@@ -33,3 +33,7 @@ export interface AppSettings {
   minimizeToTrayOnGameLaunch: boolean
   themePrimaryHex?: string
 }
+
+export interface GameBusyState {
+  pluginsSyncBusy: boolean
+}

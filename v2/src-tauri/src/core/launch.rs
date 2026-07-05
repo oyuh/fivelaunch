@@ -1,41 +1,15 @@
-use serde::{Deserialize, Serialize};
-use std::fs;
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use super::clients::{LinkOptions, PluginsMode};
 use super::linking::link_folder;
 use super::paths::{self, AppPaths};
+use super::plugins_sync::{
+    initial_sync_client_to_game, prepare_game_plugins_dir_for_sync_mode,
+    write_plugins_owner_marker,
+};
 use super::settings;
-
-/// `.fivelaunch-plugins-owner.json` payload — same shape as v1 for
-/// cross-version debugging (`clientId`, `mode`, `at`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginsOwnerMarker {
-    #[serde(rename = "clientId")]
-    pub client_id: String,
-    pub mode: String,
-    pub at: String,
-}
-
-pub fn plugins_owner_marker_path(dir: &Path) -> PathBuf {
-    dir.join(".fivelaunch-plugins-owner.json")
-}
-
-pub fn write_plugins_owner_marker(dir: &Path, client_id: &str, mode: &str) {
-    let _ = fs::create_dir_all(dir);
-    let at = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_default();
-    let marker = PluginsOwnerMarker {
-        client_id: client_id.to_string(),
-        mode: mode.to_string(),
-        at,
-    };
-    if let Ok(json) = serde_json::to_string_pretty(&marker) {
-        let _ = fs::write(plugins_owner_marker_path(dir), json);
-    }
-}
 
 /// External effects injected for testability.
 pub struct LaunchDeps<'a> {
@@ -45,18 +19,32 @@ pub struct LaunchDeps<'a> {
     pub spawn: &'a dyn Fn(&Path) -> io::Result<()>,
 }
 
-/// Launch pipeline (Phase 2 subset of v1 `GameManager.launchClient`):
-/// mods/citizen linking, junction-mode plugins, detached spawn.
+/// Instructions for the caller after a successful launch.
+#[derive(Debug)]
+pub struct LaunchOutcome {
+    /// When set (plugins sync mode), the caller must run the runtime sync
+    /// loop on a background thread for these directories.
+    pub runtime_sync: Option<RuntimeSyncPlan>,
+}
+
+#[derive(Debug)]
+pub struct RuntimeSyncPlan {
+    pub game_plugins_dir: PathBuf,
+    pub client_plugins_dir: PathBuf,
+}
+
+/// Launch pipeline — port of v1 `GameManager.launchClient`.
 ///
-/// Phase 3 adds: sync-mode plugins + runtime sync.
+/// Phase 3 state: mods/citizen links, plugins junction AND sync modes.
 /// Phase 4 adds: GTA settings apply/enforcement, CitizenFX.ini, ReShade.
 pub fn launch_client(
     app_paths: &AppPaths,
     client_id: &str,
     link: &LinkOptions,
+    mirror_caches: &mut HashMap<String, HashMap<String, f64>>,
     deps: &LaunchDeps<'_>,
     status: &mut dyn FnMut(&str),
-) -> Result<(), String> {
+) -> Result<LaunchOutcome, String> {
     let game_path_override = settings::load(&app_paths.settings_file()).game_path;
     let five_m_path = paths::five_m_path(game_path_override.as_deref())
         .ok_or("FiveM installation not found.")?;
@@ -74,6 +62,8 @@ pub fn launch_client(
         return Err("Please close GTA V and FiveM before launching a new client.".into());
     }
 
+    let mut outcome = LaunchOutcome { runtime_sync: None };
+
     // 1. Mods
     if link.mods {
         status("Linking mods...");
@@ -82,20 +72,32 @@ pub fn launch_client(
 
     // 2. Plugins
     if link.plugins {
+        let client_plugins = client_path.join("plugins");
+        let game_plugins = five_m_path.join("plugins");
+
         match link.plugins_mode.unwrap_or(PluginsMode::Sync) {
             PluginsMode::Junction => {
                 status("Linking plugins...");
-                let client_plugins = client_path.join("plugins");
-                link_folder(&client_plugins, &five_m_path.join("plugins"), false)?;
+                link_folder(&client_plugins, &game_plugins, false)?;
                 write_plugins_owner_marker(&client_plugins, client_id, "junction");
                 status("Note: Plugins are linked (junction). ReShade may open the client plugins folder.");
             }
             PluginsMode::Sync => {
-                // Phase 3 ports the full copy/sync engine. Be explicit rather
-                // than silently doing nothing.
-                status(
-                    "WARNING: Plugins sync (copy) mode is not ported yet — plugins were NOT applied. Switch this client to junction mode for now.",
+                std::fs::create_dir_all(&client_plugins).map_err(|e| e.to_string())?;
+                prepare_game_plugins_dir_for_sync_mode(&game_plugins, client_id, status)?;
+                initial_sync_client_to_game(
+                    client_id,
+                    &client_path,
+                    &client_plugins,
+                    &game_plugins,
+                    mirror_caches,
+                    status,
                 );
+                status("Note: Plugins are in copy/sync mode. ReShade should use the FiveM.app\\plugins path.");
+                outcome.runtime_sync = Some(RuntimeSyncPlan {
+                    game_plugins_dir: game_plugins,
+                    client_plugins_dir: client_plugins,
+                });
             }
         }
     }
@@ -119,13 +121,15 @@ pub fn launch_client(
     (deps.spawn)(&five_m_exe).map_err(|e| format!("Failed to start FiveM: {e}"))?;
 
     status("Launched!");
-    Ok(())
+    Ok(outcome)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::plugins_sync::{read_plugins_owner_marker, PluginsOwnerMarker};
     use std::cell::{Cell, RefCell};
+    use std::fs;
 
     struct Harness {
         dir: tempfile::TempDir,
@@ -160,11 +164,11 @@ mod tests {
         }
     }
 
-    fn link_all_junction() -> LinkOptions {
+    fn link_all(mode: PluginsMode) -> LinkOptions {
         LinkOptions {
             mods: true,
             plugins: true,
-            plugins_mode: Some(PluginsMode::Junction),
+            plugins_mode: Some(mode),
             citizen: false,
             gta_settings: false,
             citizen_fx_ini: false,
@@ -172,29 +176,31 @@ mod tests {
     }
 
     #[test]
-    fn happy_path_links_and_spawns() {
+    fn happy_path_junction_links_and_spawns() {
         let h = setup();
         let spawned = RefCell::new(Vec::<PathBuf>::new());
         let statuses = RefCell::new(Vec::<String>::new());
-
+        let not_running = || false;
+        let record_spawn = |exe: &Path| -> io::Result<()> {
+            spawned.borrow_mut().push(exe.to_path_buf());
+            Ok(())
+        };
         let deps = LaunchDeps {
-            is_game_running: &|| false,
-            spawn: &|exe| {
-                spawned.borrow_mut().push(exe.to_path_buf());
-                Ok(())
-            },
+            is_game_running: &not_running,
+            spawn: &record_spawn,
         };
 
-        launch_client(
+        let outcome = launch_client(
             &h.app_paths,
             &h.client_id,
-            &link_all_junction(),
+            &link_all(PluginsMode::Junction),
+            &mut HashMap::new(),
             &deps,
             &mut |s| statuses.borrow_mut().push(s.to_string()),
         )
         .unwrap();
 
-        // FiveM.exe spawned
+        assert!(outcome.runtime_sync.is_none(), "junction mode has no runtime sync");
         assert_eq!(spawned.borrow().len(), 1);
         assert!(spawned.borrow()[0].ends_with("FiveM.exe"));
 
@@ -226,6 +232,66 @@ mod tests {
     }
 
     #[test]
+    fn sync_mode_mirrors_plugins_and_requests_runtime_sync() {
+        let h = setup();
+        let spawned = RefCell::new(Vec::<PathBuf>::new());
+        let not_running = || false;
+        let record_spawn = |exe: &Path| -> io::Result<()> {
+            spawned.borrow_mut().push(exe.to_path_buf());
+            Ok(())
+        };
+        let deps = LaunchDeps {
+            is_game_running: &not_running,
+            spawn: &record_spawn,
+        };
+
+        // Client has a plugin; game plugins dir has foreign content that must
+        // be isolated, not merged.
+        let client_plugins = h
+            .app_paths
+            .clients_data()
+            .join(&h.client_id)
+            .join("plugins");
+        fs::create_dir_all(&client_plugins).unwrap();
+        fs::write(client_plugins.join("ReShade.ini"), b"[GENERAL]").unwrap();
+        let fivem_app = h.dir.path().join("FiveM").join("FiveM.app");
+        fs::create_dir_all(fivem_app.join("plugins")).unwrap();
+        fs::write(fivem_app.join("plugins").join("foreign.dll"), b"other").unwrap();
+
+        let mut caches = HashMap::new();
+        let outcome = launch_client(
+            &h.app_paths,
+            &h.client_id,
+            &link_all(PluginsMode::Sync),
+            &mut caches,
+            &deps,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        // Runtime sync requested with the right paths.
+        let plan = outcome.runtime_sync.expect("sync mode must request runtime sync");
+        assert_eq!(plan.client_plugins_dir, client_plugins);
+        assert_eq!(plan.game_plugins_dir, fivem_app.join("plugins"));
+
+        // Game plugins dir is a real, owned dir containing the client's files.
+        let game_plugins = fivem_app.join("plugins");
+        assert!(!fs::symlink_metadata(&game_plugins).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(game_plugins.join("ReShade.ini")).unwrap(), b"[GENERAL]");
+        assert_eq!(
+            read_plugins_owner_marker(&game_plugins).unwrap().client_id,
+            h.client_id
+        );
+        // Foreign content rotated away, not present.
+        assert!(!game_plugins.join("foreign.dll").exists());
+
+        // Mirror cache warm in memory and persisted.
+        assert!(caches
+            .get(&format!("{}:client->game", h.client_id))
+            .is_some_and(|c| !c.is_empty()));
+    }
+
+    #[test]
     fn refuses_when_game_running() {
         let h = setup();
         let spawned = Cell::new(0u32);
@@ -241,7 +307,8 @@ mod tests {
         let err = launch_client(
             &h.app_paths,
             &h.client_id,
-            &link_all_junction(),
+            &link_all(PluginsMode::Junction),
+            &mut HashMap::new(),
             &deps,
             &mut |_| {},
         )
@@ -259,33 +326,15 @@ mod tests {
             spawn: &|_| Ok(()),
         };
 
-        let err = launch_client(&h.app_paths, "nope", &link_all_junction(), &deps, &mut |_| {})
-            .unwrap_err();
+        let err = launch_client(
+            &h.app_paths,
+            "nope",
+            &link_all(PluginsMode::Junction),
+            &mut HashMap::new(),
+            &deps,
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(err.contains("not found"), "got: {err}");
-    }
-
-    #[test]
-    fn sync_mode_warns_and_does_not_link_plugins() {
-        let h = setup();
-        let statuses = RefCell::new(Vec::<String>::new());
-        let deps = LaunchDeps {
-            is_game_running: &|| false,
-            spawn: &|_| Ok(()),
-        };
-
-        let mut link = link_all_junction();
-        link.plugins_mode = Some(PluginsMode::Sync);
-
-        launch_client(&h.app_paths, &h.client_id, &link, &deps, &mut |s| {
-            statuses.borrow_mut().push(s.to_string())
-        })
-        .unwrap();
-
-        assert!(statuses.borrow().iter().any(|s| s.contains("not ported")));
-        let fivem_plugins = h.dir.path().join("FiveM").join("FiveM.app").join("plugins");
-        assert!(
-            !fivem_plugins.exists(),
-            "sync mode must not touch game plugins yet"
-        );
     }
 }

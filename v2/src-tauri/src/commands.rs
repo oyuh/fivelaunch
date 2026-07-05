@@ -1,12 +1,32 @@
+use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::core::clients::{ClientProfile, ClientStore, LinkOptions};
 use crate::core::paths::{self, AppPaths};
+use crate::core::plugins_sync::RuntimeSyncHandle;
 use crate::core::settings::{self, AppSettings};
 use crate::core::stats::ClientStats;
 
+/// Per-client in-memory mirror caches (v1 `pluginsMirrorCache`) — reduce IO
+/// on repeat launches within one app session.
+pub type MirrorCaches = HashMap<String, HashMap<String, f64>>;
+
 pub struct AppState {
     pub paths: AppPaths,
+    pub mirror_caches: Arc<Mutex<MirrorCaches>>,
+    pub runtime_sync: Arc<Mutex<Option<RuntimeSyncHandle>>>,
+}
+
+impl AppState {
+    pub fn new(paths: AppPaths) -> Self {
+        Self {
+            paths,
+            mirror_caches: Arc::new(Mutex::new(HashMap::new())),
+            runtime_sync: Arc::new(Mutex::new(None)),
+        }
+    }
 }
 
 impl AppState {
@@ -205,17 +225,80 @@ pub async fn launch_client(
 
     let client = state.store()?.get_client(&id).ok_or("Client not found.")?;
     let paths = state.paths.clone();
+    let caches = state.mirror_caches.clone();
+    let runtime = state.runtime_sync.clone();
 
     // The pipeline does blocking filesystem work — keep it off the async runtime.
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut status = |message: &str| {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let emit = |message: &str| {
             let _ = app.emit("launch-status", message);
         };
+
+        // Never launch while a previous finalizing sync is still running —
+        // starting a new client mid-finalization can mix files across clients.
+        let mut reported_waiting = false;
+        loop {
+            let finalizing = runtime
+                .lock()
+                .map(|h| h.as_ref().is_some_and(RuntimeSyncHandle::is_finalizing))
+                .unwrap_or(false);
+            if !finalizing {
+                break;
+            }
+            if !reported_waiting {
+                emit("Waiting for plugins sync to finish...");
+                reported_waiting = true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        // Stop any previous client's runtime sync before relinking.
+        if let Ok(mut guard) = runtime.lock() {
+            if let Some(mut handle) = guard.take() {
+                handle.stop_and_join();
+            }
+        }
+
         let deps = crate::core::launch::LaunchDeps {
             is_game_running: &crate::core::process::is_game_running,
             spawn: &|exe| crate::core::process::spawn_detached(exe),
         };
-        crate::core::launch::launch_client(&paths, &id, &client.link_options, &deps, &mut status)
+
+        let outcome = {
+            let mut caches = caches.lock().map_err(|e| e.to_string())?;
+            let mut status = |message: &str| emit(message);
+            crate::core::launch::launch_client(
+                &paths,
+                &id,
+                &client.link_options,
+                &mut caches,
+                &deps,
+                &mut status,
+            )?
+        };
+
+        // Sync-mode plugins: keep syncing safe files while the game runs,
+        // finalize after exit.
+        if let Some(plan) = outcome.runtime_sync {
+            let status_emitter: Arc<dyn Fn(&str) + Send + Sync> = {
+                let app = app.clone();
+                Arc::new(move |message: &str| {
+                    let _ = app.emit("launch-status", message);
+                })
+            };
+            let handle = crate::core::plugins_sync::spawn_runtime_sync(
+                plan.game_plugins_dir,
+                plan.client_plugins_dir,
+                crate::core::plugins_sync::RuntimeSyncConfig::default(),
+                Arc::new(crate::core::process::is_game_running),
+                status_emitter,
+            );
+            if let Ok(mut guard) = runtime.lock() {
+                *guard = Some(handle);
+            }
+        }
+
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -224,4 +307,23 @@ pub async fn launch_client(
 #[tauri::command]
 pub fn is_game_running() -> bool {
     crate::core::process::is_game_running()
+}
+
+/// Same shape as v1's `get-game-busy-state` response.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameBusyState {
+    pub plugins_sync_busy: bool,
+}
+
+#[tauri::command]
+pub fn get_game_busy_state(state: State<'_, AppState>) -> GameBusyState {
+    let busy = state
+        .runtime_sync
+        .lock()
+        .map(|h| h.as_ref().is_some_and(RuntimeSyncHandle::is_finalizing))
+        .unwrap_or(false);
+    GameBusyState {
+        plugins_sync_busy: busy,
+    }
 }

@@ -6,9 +6,12 @@
 
 pub mod clients;
 pub mod fs_retry;
+pub mod hash;
 pub mod launch;
 pub mod linking;
+pub mod mirror;
 pub mod paths;
+pub mod plugins_sync;
 pub mod process;
 pub mod settings;
 pub mod stats;

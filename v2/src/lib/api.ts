@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import type { AppSettings, ClientProfile, ClientStats, LinkOptions } from './types'
+import type { AppSettings, ClientProfile, ClientStats, GameBusyState, LinkOptions } from './types'
 
 /**
  * Typed command bridge. Method names mirror v1's `window.api.*` so ported
@@ -36,6 +36,7 @@ export const api = {
   // Launch
   launchClient: (id: string) => invoke<void>('launch_client', { id }),
   isGameRunning: () => invoke<boolean>('is_game_running'),
+  getGameBusyState: () => invoke<GameBusyState>('get_game_busy_state'),
   /** Subscribe to launch progress. Returns an unlisten function (async). */
   onLaunchStatus: (callback: (status: string) => void) =>
     listen<string>('launch-status', (event) => callback(event.payload)),

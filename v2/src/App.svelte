@@ -19,6 +19,7 @@
   let error = $state<string | null>(null)
   let launching = $state(false)
   let launchStatus = $state<string | null>(null)
+  let pluginsSyncBusy = $state(false)
 
   const filtered = $derived(
     clients.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
@@ -46,9 +47,22 @@
   }
 
   onMount(() => {
-    const unlisten = api.onLaunchStatus((status) => {
-      launchStatus = status
-    })
+    let unlistenFn: (() => void) | null = null
+    api
+      .onLaunchStatus((status) => {
+        launchStatus = status
+      })
+      .then((fn) => (unlistenFn = fn))
+      .catch(() => {})
+
+    const pollBusy = () => {
+      api
+        .getGameBusyState()
+        .then((s) => (pluginsSyncBusy = s.pluginsSyncBusy))
+        .catch(() => {})
+    }
+    pollBusy()
+    const busyTimer = setInterval(pollBusy, 3000)
 
     void (async () => {
       try {
@@ -65,7 +79,8 @@
     })()
 
     return () => {
-      void unlisten.then((fn) => fn())
+      clearInterval(busyTimer)
+      unlistenFn?.()
     }
   })
 
@@ -310,10 +325,11 @@
           </button>
           <button
             class="ml-auto rounded-md bg-primary px-5 py-1.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={launching}
+            disabled={launching || pluginsSyncBusy}
+            title={pluginsSyncBusy ? 'Waiting for the previous plugins sync to finish' : undefined}
             onclick={launchSelected}
           >
-            {launching ? 'Launching…' : 'Launch'}
+            {launching ? 'Launching…' : pluginsSyncBusy ? 'Sync busy…' : 'Launch'}
           </button>
         </div>
 
@@ -347,7 +363,14 @@
   <footer
     class="flex h-8 shrink-0 items-center justify-between border-t border-border px-4 text-xs text-muted-foreground"
   >
-    <span>FiveLaunch v{appVersion || '…'} (Tauri)</span>
+    <span class="flex items-center gap-2">
+      FiveLaunch v{appVersion || '…'} (Tauri)
+      {#if pluginsSyncBusy}
+        <span class="rounded-full border border-primary/50 bg-primary/15 px-2 py-0.5 text-[10px]">
+          plugins sync running
+        </span>
+      {/if}
+    </span>
     <span class="truncate pl-4 font-mono">
       {resolvedGamePath ?? 'FiveM not found — set the game path in settings'}
     </span>

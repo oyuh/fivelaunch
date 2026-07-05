@@ -13,6 +13,8 @@ pub fn run() {
     let _ = settings::ensure_initialized(&paths.settings_file());
     let _ = core::clients::ClientStore::new(&paths);
 
+    let state = AppState::new(paths);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -26,7 +28,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .manage(AppState { paths })
+        .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::get_clients,
             commands::create_client,
@@ -49,6 +51,7 @@ pub fn run() {
             commands::get_app_version,
             commands::launch_client,
             commands::is_game_running,
+            commands::get_game_busy_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -28,18 +28,35 @@ Honest notes:
 - v2 idle also currently spans 6 WebView2 utility processes; this is fixed
   overhead that won't grow with app complexity.
 
-## v2 quality gates — Phase 2
+## v2 quality gates — Phase 3
 
 | Metric | v2 value | Notes |
 | --- | --- | --- |
-| Rust unit tests | **35 passing** | incl. launch pipeline with real junctions |
-| Frontend tests | **6 passing** | `pnpm test` (vitest, ~0.4s) |
-| svelte-check | 0 errors / 0 warnings | `pnpm check`, 152 files |
-| Vite production build | ~1 s | `pnpm build` |
+| Rust unit tests | **55 passing** | mirror engine, plugins isolation, runtime loop, launch e2e |
+| Frontend tests | **12 passing** | 6 unit + 6 UI component tests (mocked IPC bridge) |
+| svelte-check | 0 errors / 0 warnings | `pnpm check`, 183 files |
+| Vite production build | ~0.6 s | `pnpm build` |
 
 Phase 2 perf note: the v1 exit-watcher + sync loops spawned `tasklist.exe`
 roughly every second while the game ran. v2's `core::process` uses native
 process enumeration (sysinfo) — zero subprocess spawns.
+
+Phase 3 perf note: v1's mirror loops ran on the Node event loop and had to
+yield every 250 files + respect a 40ms time budget per tick to keep the UI
+alive. v2 mirrors on a dedicated thread — no yielding machinery, and the
+persisted mtime cache format is byte-compatible so upgraded users keep their
+warm caches.
+
+## UI testing (how we test a desktop app)
+
+- **Component layer (in place)**: `src/tests/App.test.ts` renders the real
+  Svelte components in jsdom against Tauri's official IPC mocks
+  (`@tauri-apps/api/mocks`). Asserts rendered output AND that the right Rust
+  commands are invoked with the right args. Runs in `pnpm test`, CI-friendly.
+- **E2E layer (planned, Phase 7)**: `tauri-driver` + WebDriver against the
+  compiled exe for pre-release smoke tests (launch window, create client,
+  real filesystem). Heavier and Windows-finicky, so reserved for release
+  gates rather than every change.
 
 ## How to run everything
 

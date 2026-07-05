@@ -38,7 +38,10 @@ pnpm tauri build   # release build + NSIS bundle (src-tauri/target/release/)
 - [x] Phase 2 — linking engine + launch pipeline (junction/backups/retry, sysinfo
       process checks, detached spawn, launch-status events, Launch button).
       Plugins **sync mode** intentionally deferred to Phase 3 (launch warns).
-- [ ] Phase 3 — plugins sync + runtime sync engines
+- [x] Phase 3 — plugins sync mode: mirror engine with v1-compatible mtime
+      caches, ownership markers + cross-client isolation, background runtime
+      sync loop with finalization + busy-state gating. UI component test
+      layer added (jsdom + Tauri IPC mocks).
 - [ ] Phase 4 — GTA settings XML + CitizenFX.ini + ReShade sync
 - [ ] Phase 5 — full UI port (dialogs, logs panel, settings, GTA settings editor)
 - [ ] Phase 6 — tray, single-instance, shortcuts, update checker
