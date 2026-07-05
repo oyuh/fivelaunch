@@ -1,0 +1,26 @@
+import { defineConfig } from 'vite'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+import tailwindcss from '@tailwindcss/vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [svelte(), tailwindcss()],
+
+  // Stop PostCSS config discovery from walking up into the v1 repo root
+  // (its postcss.config.js loads Tailwind 3 and breaks the build).
+  css: {
+    postcss: { plugins: [] }
+  },
+
+  // Tauri expects a fixed port; fail if unavailable instead of picking another.
+  server: {
+    port: 5173,
+    strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/**']
+    }
+  },
+
+  // Don't clear the terminal — it hides Rust build errors during `tauri dev`.
+  clearScreen: false
+})

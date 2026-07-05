@@ -1,0 +1,43 @@
+[package]
+name = "fivelaunch"
+version = "2.0.0"
+description = "FiveLaunch - launch FiveM with select mods and settings"
+authors = ["Lawson Hart"]
+license = "SEE LICENSE IN LICENSE"
+repository = "https://github.com/oyuh/fivelaunch"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "fivelaunch_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3" }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+criterion = "0.5"
+
+[[bench]]
+name = "core_bench"
+harness = false
+
+# Small + fast release binary: this is a big part of the v2 pitch.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
