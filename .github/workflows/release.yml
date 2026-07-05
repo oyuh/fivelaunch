@@ -41,6 +41,10 @@ jobs:
       - name: Frontend tests
         run: bun run test
 
+      # Rust's build script embeds/validates frontendDist — build it first.
+      - name: Build frontend
+        run: bun run build
+
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
