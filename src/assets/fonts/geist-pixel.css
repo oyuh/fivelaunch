@@ -1,0 +1,44 @@
+/*
+ * Geist Pixel — Vercel's decorative pixel display family (OFL-1.1).
+ * Vendored .woff2 from the `geist` npm package (dist/fonts/geist-pixel).
+ * Five grid styles are exposed as distinct families so the style guide can
+ * showcase them; "Geist Pixel" (the default used by --font-mono) aliases Square,
+ * the most legible variant.
+ */
+
+@font-face {
+  font-family: 'Geist Pixel';
+  src: url('./geist-pixel/GeistPixel-Square.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Square';
+  src: url('./geist-pixel/GeistPixel-Square.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Circle';
+  src: url('./geist-pixel/GeistPixel-Circle.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Grid';
+  src: url('./geist-pixel/GeistPixel-Grid.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Line';
+  src: url('./geist-pixel/GeistPixel-Line.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Triangle';
+  src: url('./geist-pixel/GeistPixel-Triangle.woff2') format('woff2');
+  font-display: swap;
+}

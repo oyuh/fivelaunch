@@ -10,6 +10,7 @@
  * a separate, heavier layer planned for pre-release smoke tests — see PLAN.md.)
  */
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/svelte'
+import { within } from '@testing-library/dom'
 import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ClientProfile } from '../lib/types'
@@ -25,6 +26,7 @@ function makeClient(id: string, name: string): ClientProfile {
   return {
     id,
     name,
+    icon: 'gamepad',
     lastPlayed: 1_719_849_600_000,
     linkOptions: {
       mods: true,
@@ -74,9 +76,15 @@ function setupFakeBackend(): void {
         return { pluginsSyncBusy: false }
       case 'create_client': {
         const created = makeClient(`id-${String(args.name)}`, String(args.name))
+        created.icon = (args.icon as string) ?? 'gamepad'
         clients = [...clients, created]
         return created
       }
+      case 'set_client_icon':
+        clients = clients.map((c) =>
+          c.id === args.id ? { ...c, icon: String(args.icon) } : c
+        )
+        return null
       case 'delete_client':
         clients = clients.filter((c) => c.id !== args.id)
         return null
@@ -89,9 +97,7 @@ function setupFakeBackend(): void {
         return null
       }
       case 'rename_client': {
-        clients = clients.map((c) =>
-          c.id === args.id ? { ...c, name: String(args.name) } : c
-        )
+        clients = clients.map((c) => (c.id === args.id ? { ...c, name: String(args.name) } : c))
         return null
       }
       case 'launch_client':
@@ -179,41 +185,46 @@ describe('App shell', () => {
     expect(screen.getByText('id-main')).toBeInTheDocument()
   })
 
-  it('creates a client through the backend and shows it', async () => {
+  it('creates a client through the modal with a chosen icon', async () => {
     render(App)
     await screen.findByText('Main RP')
 
-    await fireEvent.input(screen.getByPlaceholderText('New client name'), {
+    await fireEvent.click(screen.getByRole('button', { name: 'New client' }))
+    await fireEvent.input(await screen.findByPlaceholderText('e.g. Main RP'), {
       target: { value: 'Fresh Client' }
     })
-    await fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Create client' }))
 
     expect(await screen.findByText('Fresh Client')).toBeInTheDocument()
-    expect(called('create_client').at(-1)?.args.name).toBe('Fresh Client')
+    const create = called('create_client').at(-1)
+    expect(create?.args.name).toBe('Fresh Client')
+    // An icon key is sent with creation.
+    expect(typeof create?.args.icon).toBe('string')
   })
 
   it('launches the selected client', async () => {
     render(App)
 
     await fireEvent.click(await screen.findByText('Drift Server'))
-    await fireEvent.click(await screen.findByRole('button', { name: 'Launch' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Launch Drift Server' }))
 
     await waitFor(() => {
       expect(called('launch_client').at(-1)?.args.id).toBe('id-drift')
     })
   })
 
-  it('requires two clicks to delete (confirm step)', async () => {
+  it('deletes the selected client after confirming in the dialog', async () => {
     render(App)
 
     await fireEvent.click(await screen.findByText('Main RP'))
-    const deleteBtn = await screen.findByRole('button', { name: 'Delete' })
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete client' }))
 
-    await fireEvent.click(deleteBtn)
+    // The trigger only opens the confirm modal — nothing deleted yet.
     expect(called('delete_client')).toHaveLength(0)
-    expect(await screen.findByText('Confirm delete?')).toBeInTheDocument()
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete?' }))
+    const dialog = await screen.findByRole('dialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete client' }))
+
     await waitFor(() => {
       expect(called('delete_client').at(-1)?.args.id).toBe('id-main')
     })
@@ -222,20 +233,21 @@ describe('App shell', () => {
     })
   })
 
-  it('toggles link options through the backend', async () => {
+  it('toggles a link switch and changes the plugins mode', async () => {
     render(App)
     await fireEvent.click(await screen.findByText('Main RP'))
 
-    // Boolean chip: Mods on -> off.
-    await fireEvent.click(await screen.findByRole('button', { name: 'Mods' }))
+    // Mods switch: on -> off.
+    await fireEvent.click(await screen.findByRole('switch', { name: 'Mods' }))
     await waitFor(() => {
       const call = called('update_client_links').at(-1)
       expect(call?.args.id).toBe('id-main')
       expect((call?.args.linkOptions as { mods: boolean }).mods).toBe(false)
     })
 
-    // Plugins chip cycles: on(sync) -> junction.
-    await fireEvent.click(await screen.findByRole('button', { name: 'Plugins (sync)' }))
+    // Plugins dropdown: Sync -> Junction.
+    await fireEvent.click(await screen.findByRole('button', { name: /Sync \(copy\)/ }))
+    await fireEvent.click(await screen.findByRole('button', { name: /Junction/ }))
     await waitFor(() => {
       const opts = called('update_client_links').at(-1)?.args.linkOptions as {
         plugins: boolean
@@ -244,23 +256,21 @@ describe('App shell', () => {
       expect(opts.plugins).toBe(true)
       expect(opts.pluginsMode).toBe('junction')
     })
-    expect(await screen.findByRole('button', { name: 'Plugins (junction)' })).toBeInTheDocument()
-
-    // junction -> off.
-    await fireEvent.click(screen.getByRole('button', { name: 'Plugins (junction)' }))
-    await waitFor(() => {
-      const opts = called('update_client_links').at(-1)?.args.linkOptions as { plugins: boolean }
-      expect(opts.plugins).toBe(false)
-    })
   })
 
-  it('shows the first-run dialog until acknowledged', async () => {
+  it('shows the first-run dialog and gates continue on the backup checkbox', async () => {
     localStorage.removeItem('fivelaunch.firstRunAck')
     render(App)
 
     expect(await screen.findByText('Welcome to FiveLaunch')).toBeInTheDocument()
 
-    await fireEvent.click(screen.getByRole('button', { name: 'I Understand' }))
+    // Continue is disabled until the user confirms they've backed up.
+    const continueBtn = screen.getByRole('button', { name: 'I understand' })
+    expect(continueBtn).toBeDisabled()
+
+    await fireEvent.click(screen.getByRole('checkbox'))
+    await fireEvent.click(continueBtn)
+
     await waitFor(() => {
       expect(screen.queryByText('Welcome to FiveLaunch')).not.toBeInTheDocument()
     })
@@ -272,7 +282,7 @@ describe('App shell', () => {
     await screen.findByText('Main RP')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(await screen.findByText('Global Settings')).toBeInTheDocument()
+    expect(await screen.findByText('Global settings')).toBeInTheDocument()
 
     const pathInput = screen.getByPlaceholderText('C:\\Users\\...\\AppData\\Local\\FiveM\\FiveM.app')
     await fireEvent.input(pathInput, { target: { value: 'D:\\FiveM\\FiveM.app' } })
@@ -286,19 +296,19 @@ describe('App shell', () => {
   it('edits and saves GTA settings through the editor', async () => {
     render(App)
     await fireEvent.click(await screen.findByText('Main RP'))
-    await fireEvent.click(await screen.findByRole('button', { name: 'Edit GTA settings' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'GTA settings' }))
 
     // Loads the client's document.
     await waitFor(() => {
       expect(called('get_client_gta_settings').at(-1)?.args.id).toBe('id-main')
     })
-    expect(await screen.findByText('GTA V Settings Editor')).toBeInTheDocument()
+    expect(await screen.findByText('GTA V settings')).toBeInTheDocument()
 
     // Tessellation is a mapped select with friendly labels.
     const select = (await screen.findByDisplayValue('Normal')) as HTMLSelectElement
     await fireEvent.change(select, { target: { value: '3' } })
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
     await waitFor(() => {
       const saved = called('save_client_gta_settings').at(-1)
       expect(saved?.args.id).toBe('id-main')
@@ -325,17 +335,14 @@ describe('App shell', () => {
     expect(screen.getByText('sound.rpf')).toBeInTheDocument()
   })
 
-  it('shows the update badge and opens the release page', async () => {
+  it('shows the update badge and opens the update dialog', async () => {
     render(App)
 
     const badge = await screen.findByRole('button', { name: 'Update available: v2.5.0' })
     await fireEvent.click(badge)
 
-    await waitFor(() => {
-      expect(called('open_url').at(-1)?.args.url).toBe(
-        'https://github.com/oyuh/fivelaunch/releases/tag/v2.5.0'
-      )
-    })
+    // The badge now opens the in-app update dialog instead of the browser.
+    expect(await screen.findByText('Software update')).toBeInTheDocument()
   })
 
   it('creates a desktop shortcut from client details', async () => {
@@ -343,7 +350,7 @@ describe('App shell', () => {
     await fireEvent.click(await screen.findByText('Main RP'))
     await fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Create Desktop Shortcut' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create desktop shortcut' }))
     await waitFor(() => {
       expect(called('create_client_shortcut').at(-1)?.args.id).toBe('id-main')
     })
@@ -354,15 +361,16 @@ describe('App shell', () => {
     render(App)
     await screen.findByText('Main RP')
 
-    await fireEvent.click(screen.getByRole('button', { name: 'History' }))
-    expect(await screen.findByText('Backup History')).toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: /History/ }))
+    expect(await screen.findByText('Backup history')).toBeInTheDocument()
     expect(await screen.findByText('mods')).toBeInTheDocument()
     expect(screen.getByText(/12 files/)).toBeInTheDocument()
 
     // Two-step delete: first click arms, second click deletes via backend.
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('dialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     expect(called('delete_backup')).toHaveLength(0)
-    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete?' }))
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm delete?' }))
     await waitFor(() => {
       expect(called('delete_backup').at(-1)?.args.name).toBe('mods_1751700000000')
     })

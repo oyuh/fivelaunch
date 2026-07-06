@@ -49,31 +49,54 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # Signs the NSIS setup for the updater. createUpdaterArtifacts (tauri.conf.json)
+      # emits a *-setup.exe.sig next to the installer.
       - name: Package Windows (tauri build)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bun run tauri build
 
-      - name: Stage release assets
+      # Rename the installer to a stable URL and build the updater manifest.
+      - name: Stage release assets + updater manifest
         run: |
           New-Item -ItemType Directory -Force release-dist | Out-Null
-          Copy-Item src-tauri/target/release/fivelaunch.exe release-dist/FiveLaunch.exe
-          Copy-Item src-tauri/target/release/fivelaunch.exe release-dist/FiveLaunch-Portable.exe
-          Compress-Archive -Path release-dist/FiveLaunch.exe -DestinationPath release-dist/FiveLaunch-windows.zip -Force
-          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($setup) { Copy-Item $setup.FullName release-dist/FiveLaunch-Setup.exe }
-          Get-ChildItem release-dist | Format-Table -AutoSize
 
-      - name: Publish release asset
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "NSIS setup not found" }
+          Copy-Item $setup.FullName release-dist/FiveLaunch-Setup.exe
+
+          $sigFile = "$($setup.FullName).sig"
+          if (-not (Test-Path $sigFile)) {
+            throw "Updater signature (.sig) missing - is the TAURI_SIGNING_PRIVATE_KEY secret set?"
+          }
+          $signature = (Get-Content $sigFile -Raw).Trim()
+
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $url = "https://github.com/oyuh/fivelaunch/releases/download/$tag/FiveLaunch-Setup.exe"
+
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = "FiveLaunch $version. See the release page for what's new."
+            pub_date  = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{ signature = $signature; url = $url }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content release-dist/latest.json -Encoding utf8
+
+          Get-ChildItem release-dist | Format-Table -AutoSize
+          Get-Content release-dist/latest.json
+
+      # Ship only the signed setup + the manifest (no portable build).
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
-          $assets = @(
-            "release-dist/FiveLaunch-Portable.exe",
-            "release-dist/FiveLaunch-windows.zip"
-          )
-          if (Test-Path release-dist/FiveLaunch-Setup.exe) {
-            $assets += "release-dist/FiveLaunch-Setup.exe"
-          }
+          $assets = @("release-dist/FiveLaunch-Setup.exe", "release-dist/latest.json")
 
           gh release view $tag | Out-Null
           if ($LASTEXITCODE -eq 0) {

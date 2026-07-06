@@ -3,11 +3,22 @@
   import TitleBar from './lib/components/TitleBar.svelte'
   import SettingsDialog from './lib/components/SettingsDialog.svelte'
   import FirstRunDialog from './lib/components/FirstRunDialog.svelte'
-  import RefsDialog from './lib/components/RefsDialog.svelte'
   import ClientDetailsDialog from './lib/components/ClientDetailsDialog.svelte'
   import GtaSettingsDialog from './lib/components/GtaSettingsDialog.svelte'
   import HistoryDialog from './lib/components/HistoryDialog.svelte'
+  import CreateClientDialog from './lib/components/CreateClientDialog.svelte'
+  import UpdateDialog from './lib/components/UpdateDialog.svelte'
   import LogsPanel from './lib/components/LogsPanel.svelte'
+  import Icon from './lib/components/ui/Icon.svelte'
+  import IconButton from './lib/components/ui/IconButton.svelte'
+  import Button from './lib/components/ui/Button.svelte'
+  import Switch from './lib/components/ui/Switch.svelte'
+  import Menu from './lib/components/ui/Menu.svelte'
+  import MenuItem from './lib/components/ui/MenuItem.svelte'
+  import ConfirmDialog from './lib/components/ui/ConfirmDialog.svelte'
+  import StatItem from './lib/components/ui/StatItem.svelte'
+  import { CLIENT_ICONS, DEFAULT_CLIENT_ICON, clientIconSvg } from './lib/components/ui/icons'
+  import { tooltip } from './lib/actions/tooltip'
   import { api } from './lib/api'
   import { formatBytes } from './lib/format'
   import { applyPrimaryHexToRoot, DEFAULT_PRIMARY_HEX } from './lib/theme'
@@ -18,10 +29,10 @@
   let clients = $state<ClientProfile[]>([])
   let selectedId = $state<string | null>(null)
   let query = $state('')
-  let newName = $state('')
+  let searchOpen = $state(false)
+  let createOpen = $state(false)
   let renameValue = $state('')
   let renaming = $state(false)
-  let confirmingDelete = $state(false)
   let stats = $state<ClientStats | null>(null)
   let appVersion = $state('')
   let resolvedGamePath = $state<string | null>(null)
@@ -33,10 +44,11 @@
   // Dialogs / panels
   let settingsOpen = $state(false)
   let firstRunOpen = $state(false)
-  let refsOpen = $state(false)
   let detailsOpen = $state(false)
   let gtaSettingsOpen = $state(false)
   let historyOpen = $state(false)
+  let deleteConfirmOpen = $state(false)
+  let updateOpen = $state(false)
   let logsOpen = $state(false)
 
   // Log store: launch-status events + main-process logs (app-log events).
@@ -75,58 +87,55 @@
   )
   const selected = $derived(clients.find((c) => c.id === selectedId) ?? null)
 
-  type LinkKey = 'mods' | 'plugins' | 'citizen' | 'gtaSettings' | 'citizenFxIni'
+  type BoolLink = 'mods' | 'citizen' | 'gtaSettings' | 'citizenFxIni'
+  type PluginsState = 'off' | 'sync' | 'junction'
 
-  const linkChips = $derived.by(() => {
-    if (!selected) return []
-    const o = selected.linkOptions
-    const chips: { key: LinkKey; label: string; on: boolean; hint: string }[] = [
-      { key: 'mods', label: 'Mods', on: o.mods, hint: 'Link the mods folder' },
-      {
-        key: 'plugins',
-        label: `Plugins${o.plugins ? ` (${o.pluginsMode ?? 'sync'})` : ''}`,
-        on: o.plugins,
-        hint: 'Click to cycle: off → sync (copy) → junction → off'
-      },
-      { key: 'citizen', label: 'Citizen', on: o.citizen, hint: 'Link the citizen folder (advanced)' },
-      {
-        key: 'gtaSettings',
-        label: 'GTA settings',
-        on: o.gtaSettings,
-        hint: 'Apply + enforce this client’s gta5_settings.xml'
-      },
-      {
-        key: 'citizenFxIni',
-        label: 'CitizenFX.ini',
-        on: o.citizenFxIni,
-        hint: 'Seed + sync this client’s CitizenFX.ini'
-      }
-    ]
-    return chips
-  })
+  // Simple on/off linking toggles + their one-line explanations.
+  const boolLinks: { key: BoolLink; label: string; hint: string }[] = [
+    { key: 'mods', label: 'Mods', hint: 'Share this client’s mods folder with the game.' },
+    { key: 'citizen', label: 'Citizen', hint: 'Link the citizen folder (advanced).' },
+    { key: 'gtaSettings', label: 'GTA settings', hint: 'Apply this client’s graphics settings on launch.' },
+    { key: 'citizenFxIni', label: 'CitizenFX.ini', hint: 'Keep this client’s CitizenFX.ini in sync.' }
+  ]
 
-  async function toggleLink(key: LinkKey): Promise<void> {
+  const pluginsState = $derived<PluginsState>(
+    !selected?.linkOptions.plugins ? 'off' : (selected.linkOptions.pluginsMode ?? 'sync')
+  )
+
+  const pluginsLabel = $derived(
+    pluginsState === 'off' ? 'Off' : pluginsState === 'junction' ? 'Junction' : 'Sync (copy)'
+  )
+
+  async function updateLinks(next: ClientProfile['linkOptions']): Promise<void> {
     if (!selected) return
-    const o = { ...selected.linkOptions }
-    if (key === 'plugins') {
-      // Cycle: off -> sync (copy) -> junction -> off
-      if (!o.plugins) {
-        o.plugins = true
-        o.pluginsMode = 'sync'
-      } else if ((o.pluginsMode ?? 'sync') === 'sync') {
-        o.pluginsMode = 'junction'
-      } else {
-        o.plugins = false
-      }
-    } else {
-      o[key] = !o[key]
-    }
     try {
-      await api.updateClientLinks(selected.id, o)
+      await api.updateClientLinks(selected.id, next)
       await refresh()
     } catch (e) {
       error = String(e)
     }
+  }
+
+  function setLinkBool(key: BoolLink, value: boolean): void {
+    if (!selected) return
+    void updateLinks({ ...selected.linkOptions, [key]: value })
+  }
+
+  function setPlugins(mode: PluginsState): void {
+    if (!selected) return
+    const o = { ...selected.linkOptions }
+    if (mode === 'off') {
+      o.plugins = false
+    } else {
+      o.plugins = true
+      o.pluginsMode = mode
+    }
+    void updateLinks(o)
+  }
+
+  /** Open a folder (from the Folders dropdown), surfacing any error. */
+  function openRef(action: Promise<void>): void {
+    action.catch((e) => (error = String(e)))
   }
 
   async function refresh(): Promise<void> {
@@ -212,7 +221,6 @@
   $effect(() => {
     const id = selectedId
     stats = null
-    confirmingDelete = false
     renaming = false
     if (!id) return
     api
@@ -223,17 +231,25 @@
       .catch(() => {})
   })
 
-  async function createClient(): Promise<void> {
-    const name = newName.trim()
-    if (!name) return
+  async function onClientCreated(created: ClientProfile): Promise<void> {
+    await refresh()
+    selectedId = created.id
+  }
+
+  async function setIcon(key: string): Promise<void> {
+    if (!selected) return
     try {
-      const created = await api.createClient(name)
-      newName = ''
+      await api.setClientIcon(selected.id, key)
       await refresh()
-      selectedId = created.id
     } catch (e) {
       error = String(e)
     }
+  }
+
+  function startRename(): void {
+    if (!selected) return
+    renameValue = selected.name
+    renaming = true
   }
 
   async function applyRename(): Promise<void> {
@@ -254,13 +270,8 @@
 
   async function deleteSelected(): Promise<void> {
     if (!selected) return
-    if (!confirmingDelete) {
-      confirmingDelete = true
-      return
-    }
     try {
       await api.deleteClient(selected.id)
-      confirmingDelete = false
       await refresh()
     } catch (e) {
       error = String(e)
@@ -291,197 +302,348 @@
 
   <main class="grid min-h-0 flex-1 grid-cols-[320px_1fr] gap-4 p-4">
     <!-- Client list -->
-    <section class="flex min-h-0 flex-col rounded-lg border border-border bg-card">
-      <div class="border-b border-border p-3">
-        <h2 class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <section class="flex min-h-0 flex-col overflow-hidden rounded-lg bg-surface-1">
+      <div class="flex items-center gap-1.5 border-b border-divider px-3 py-2.5">
+        <h2 class="mr-auto text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Clients
         </h2>
-        <input
-          class="w-full rounded-md border border-input bg-secondary/40 px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
-          placeholder="Search clients..."
-          bind:value={query}
+        <IconButton
+          icon="search"
+          label="Search clients"
+          size="sm"
+          active={searchOpen}
+          onclick={() => {
+            searchOpen = !searchOpen
+            if (!searchOpen) query = ''
+          }}
         />
+        <IconButton icon="plus" label="New client" size="sm" onclick={() => (createOpen = true)} />
       </div>
+
+      {#if searchOpen}
+        <div class="border-b border-divider p-2">
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="w-full rounded-md border border-input bg-surface-2 px-3 py-1.5 text-sm outline-none transition placeholder:text-muted-foreground focus:border-ring/40 focus:ring-2 focus:ring-ring/60"
+            placeholder="Search clients…"
+            autofocus
+            bind:value={query}
+          />
+        </div>
+      {/if}
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
         {#if filtered.length === 0}
           <p class="px-2 py-6 text-center text-sm text-muted-foreground">
-            {clients.length === 0 ? 'No clients yet. Create one below.' : 'No matches.'}
+            {clients.length === 0 ? 'No clients yet. Click + to add one.' : 'No matches.'}
           </p>
         {:else}
           {#each filtered as client (client.id)}
             <button
-              class="mb-1 flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors {selectedId ===
+              class="mb-1 flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors {selectedId ===
               client.id
-                ? 'bg-primary/15 text-foreground ring-1 ring-primary/40'
-                : 'hover:bg-secondary/60'}"
+                ? 'bg-accent-wash ring-1 ring-primary/40'
+                : 'hover:bg-surface-3'}"
               onclick={() => (selectedId = client.id)}
             >
-              <span class="truncate text-sm font-medium">{client.name}</span>
-              <span class="truncate text-xs text-muted-foreground">
-                Last played: {formatLastPlayed(client.lastPlayed)}
+              <span
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md {selectedId ===
+                client.id
+                  ? 'bg-primary/20 text-primary'
+                  : 'bg-surface-2 text-muted-foreground'}"
+              >
+                <Icon svg={clientIconSvg(client.icon)} size={18} />
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-semibold">{client.name}</span>
+                <span class="block truncate text-xs text-muted-foreground">
+                  {formatLastPlayed(client.lastPlayed)}
+                </span>
               </span>
             </button>
           {/each}
         {/if}
       </div>
-
-      <div class="flex gap-2 border-t border-border p-3">
-        <input
-          class="min-w-0 flex-1 rounded-md border border-input bg-secondary/40 px-3 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
-          placeholder="New client name"
-          bind:value={newName}
-          onkeydown={(e) => e.key === 'Enter' && createClient()}
-        />
-        <button
-          class="shrink-0 rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          disabled={!newName.trim()}
-          onclick={createClient}
-        >
-          Create
-        </button>
-      </div>
     </section>
 
     <!-- Overview -->
-    <section class="flex min-h-0 flex-col rounded-lg border border-border bg-card">
+    <section class="flex min-h-0 flex-col overflow-hidden rounded-lg bg-surface-1">
       {#if !selected}
-        <div class="flex flex-1 items-center justify-center">
+        <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <span class="flex h-14 w-14 items-center justify-center rounded-xl bg-surface-2 text-muted-foreground">
+            <Icon name="play" size={26} />
+          </span>
           <p class="text-sm text-muted-foreground">Select a client to see its details.</p>
         </div>
       {:else}
-        <div class="flex items-start justify-between border-b border-border p-4">
-          <div class="min-w-0">
+        <!-- Header: icon (click to change) + editable name + action icons -->
+        <div class="flex shrink-0 items-start gap-4 border-b border-divider p-4">
+          <Menu align="start" width="w-64">
+            {#snippet trigger({ toggle })}
+              <button
+                class="group relative flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-accent-wash text-primary transition hover:brightness-110"
+                use:tooltip={'Change icon'}
+                aria-label="Change client icon"
+                onclick={toggle}
+              >
+                <Icon svg={clientIconSvg(selected.icon)} size={24} />
+                <span
+                  class="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-surface-1 bg-surface-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  <Icon name="pencil" size={9} />
+                </span>
+              </button>
+            {/snippet}
+            {#snippet children({ close })}
+              <p class="px-1 pb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Icon
+              </p>
+              <div class="grid grid-cols-5 gap-1">
+                {#each CLIENT_ICONS as ic (ic.key)}
+                  <button
+                    class="flex aspect-square items-center justify-center rounded-md transition-colors {(selected.icon ??
+                      DEFAULT_CLIENT_ICON) === ic.key
+                      ? 'bg-accent-wash text-primary ring-1 ring-primary/50'
+                      : 'text-muted-foreground hover:bg-surface-3 hover:text-foreground'}"
+                    use:tooltip={ic.label}
+                    aria-label={ic.label}
+                    onclick={() => {
+                      close()
+                      setIcon(ic.key)
+                    }}
+                  >
+                    <Icon svg={ic.svg} size={18} />
+                  </button>
+                {/each}
+              </div>
+            {/snippet}
+          </Menu>
+
+          <div class="min-w-0 flex-1">
             {#if renaming}
-              <div class="flex items-center gap-2">
-                <input
-                  class="rounded-md border border-input bg-secondary/40 px-3 py-1.5 text-lg font-semibold outline-none focus:ring-1 focus:ring-ring"
-                  bind:value={renameValue}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') applyRename()
-                    if (e.key === 'Escape') renaming = false
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                class="w-full max-w-sm rounded-md border border-input bg-surface-2 px-2 py-1 font-display text-2xl font-bold outline-none focus:border-ring/40 focus:ring-2 focus:ring-ring/60"
+                bind:value={renameValue}
+                autofocus
+                onblur={applyRename}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') applyRename()
+                  if (e.key === 'Escape') renaming = false
+                }}
+              />
+            {:else}
+              <button
+                class="group flex max-w-full items-center gap-2 text-left"
+                use:tooltip={'Click to rename'}
+                onclick={startRename}
+              >
+                <h1 class="truncate font-display text-2xl font-bold tracking-tight">
+                  {selected.name}
+                </h1>
+                <Icon
+                  name="pencil"
+                  size={15}
+                  class="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              </button>
+            {/if}
+            <p class="mt-0.5 truncate font-mono text-xs text-muted-foreground">{selected.id}</p>
+          </div>
+
+          <div class="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" icon="info" onclick={() => (detailsOpen = true)}>
+              Details
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              icon="sliders"
+              onclick={() => (gtaSettingsOpen = true)}
+            >
+              GTA settings
+            </Button>
+            <Menu align="end" width="w-56">
+              {#snippet trigger({ toggle })}
+                <Button variant="outline" size="sm" icon="folder" onclick={toggle}>Folders</Button>
+              {/snippet}
+              {#snippet children({ close })}
+                <MenuItem
+                  icon="folder"
+                  label="Client folder"
+                  onclick={() => {
+                    close()
+                    if (selected) openRef(api.openClientFolder(selected.id))
                   }}
                 />
-                <button
-                  class="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:opacity-90"
-                  onclick={applyRename}
-                >
-                  Save
-                </button>
-              </div>
-            {:else}
-              <h1 class="truncate text-xl font-bold">{selected.name}</h1>
-            {/if}
-            <p class="mt-1 font-mono text-xs text-muted-foreground">{selected.id}</p>
-          </div>
-
-          <div class="flex shrink-0 gap-2 pl-4">
-            <button
-              class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              onclick={() => {
-                renameValue = selected?.name ?? ''
-                renaming = true
-              }}
-            >
-              Rename
-            </button>
-            <button
-              class="rounded-md border px-3 py-1.5 text-sm transition-colors {confirmingDelete
-                ? 'border-destructive bg-destructive text-destructive-foreground'
-                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground'}"
-              onclick={deleteSelected}
-              onmouseleave={() => (confirmingDelete = false)}
-            >
-              {confirmingDelete ? 'Confirm delete?' : 'Delete'}
-            </button>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-3 gap-3 p-4">
-          <div class="rounded-md border border-border bg-secondary/30 p-3">
-            <p class="text-xs uppercase tracking-wider text-muted-foreground">Files</p>
-            <p class="mt-1 text-lg font-semibold">
-              {stats ? stats.fileCount.toLocaleString() : '…'}
-            </p>
-          </div>
-          <div class="rounded-md border border-border bg-secondary/30 p-3">
-            <p class="text-xs uppercase tracking-wider text-muted-foreground">Size</p>
-            <p class="mt-1 text-lg font-semibold">{stats ? formatBytes(stats.totalBytes) : '…'}</p>
-          </div>
-          <div class="rounded-md border border-border bg-secondary/30 p-3">
-            <p class="text-xs uppercase tracking-wider text-muted-foreground">Last played</p>
-            <p class="mt-1 truncate text-lg font-semibold">
-              {formatLastPlayed(selected.lastPlayed)}
-            </p>
+                <MenuItem
+                  icon="folder"
+                  label="Client plugins"
+                  onclick={() => {
+                    close()
+                    if (selected) openRef(api.openClientPluginsFolder(selected.id))
+                  }}
+                />
+                <MenuItem
+                  icon="folderOpen"
+                  label="FiveM folder"
+                  onclick={() => {
+                    close()
+                    openRef(api.openFiveMFolder())
+                  }}
+                />
+                <MenuItem
+                  icon="folderOpen"
+                  label="FiveM plugins"
+                  onclick={() => {
+                    close()
+                    openRef(api.openFiveMPluginsFolder())
+                  }}
+                />
+                <MenuItem
+                  icon="externalLink"
+                  label="CitizenFX folder"
+                  onclick={() => {
+                    close()
+                    openRef(api.openCitizenFxFolder())
+                  }}
+                />
+              {/snippet}
+            </Menu>
           </div>
         </div>
 
-        <div class="px-4">
-          <p class="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Linking
-          </p>
-          <div class="flex flex-wrap gap-2">
-            {#each linkChips as chip (chip.key)}
-              <button
-                class="rounded-full border px-3 py-1 text-xs transition-colors {chip.on
-                  ? 'border-primary/50 bg-primary/15 text-foreground hover:bg-primary/25'
-                  : 'border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}"
-                title={chip.hint}
-                onclick={() => toggleLink(chip.key)}
-              >
-                {chip.label}
-              </button>
-            {/each}
-          </div>
-        </div>
-
-        <div class="mt-auto flex flex-wrap gap-2 p-4">
-          <button
-            class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onclick={() => (detailsOpen = true)}
-          >
-            Details
-          </button>
-          <button
-            class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onclick={() => (gtaSettingsOpen = true)}
-            title="Edit this client's gta5_settings.xml"
-          >
-            Edit GTA settings
-          </button>
-          <button
-            class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onclick={() => (refsOpen = true)}
-            title="Quick links to useful folders"
-          >
-            Refs
-          </button>
-          <button
-            class="ml-auto rounded-md bg-primary px-5 py-1.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        <!-- Scrollable body: launch + linking -->
+        <div class="min-h-0 flex-1 overflow-y-auto p-4">
+          <Button
+            variant="hero"
+            size="lg"
+            full
+            icon="play"
+            class="h-14 text-lg"
             disabled={launching || pluginsSyncBusy}
+            loading={launching}
             title={pluginsSyncBusy ? 'Waiting for the previous plugins sync to finish' : undefined}
             onclick={launchSelected}
           >
-            {launching ? 'Launching…' : pluginsSyncBusy ? 'Sync busy…' : 'Launch'}
-          </button>
+            {launching ? 'Launching…' : pluginsSyncBusy ? 'Sync busy…' : `Launch ${selected.name}`}
+          </Button>
+
+          {#if launchStatus}
+            <div class="mt-2 flex items-center gap-2 rounded-md bg-surface-2 px-3 py-2">
+              {#if launching}
+                <span
+                  class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-surface-3 border-t-primary"
+                ></span>
+              {/if}
+              <p
+                class="truncate text-xs {launchStatus.startsWith('WARNING')
+                  ? 'text-destructive'
+                  : 'text-muted-foreground'}"
+              >
+                {launchStatus}
+              </p>
+            </div>
+          {/if}
+
+          <!-- Linking -->
+          <div class="mt-6">
+            <div class="mb-2 flex items-baseline gap-2">
+              <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Linking
+              </p>
+              <span class="text-xs text-muted-foreground">· what gets shared with FiveM on launch</span>
+            </div>
+
+            <div class="divide-y divide-divider overflow-hidden rounded-lg bg-surface-2/50">
+              <!-- Plugins (has modes) -->
+              <div class="flex items-center gap-3 px-3 py-2.5">
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-medium">Plugins</p>
+                  <p class="text-xs text-muted-foreground">How per-client plugins get into FiveM.</p>
+                </div>
+                <Menu align="end" width="w-64">
+                  {#snippet trigger({ toggle })}
+                    <button
+                      class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-surface-3"
+                      onclick={toggle}
+                    >
+                      <span
+                        class="h-1.5 w-1.5 rounded-full {pluginsState === 'off'
+                          ? 'bg-muted-foreground'
+                          : 'bg-primary'}"
+                      ></span>
+                      {pluginsLabel}
+                      <Icon name="chevronDown" size={14} class="text-muted-foreground" />
+                    </button>
+                  {/snippet}
+                  {#snippet children({ close })}
+                    <MenuItem
+                      label="Off"
+                      description="Don’t touch the plugins folder."
+                      active={pluginsState === 'off'}
+                      onclick={() => {
+                        close()
+                        setPlugins('off')
+                      }}
+                    />
+                    <MenuItem
+                      label="Sync (copy)"
+                      description="Copy plugins in, keep them synced while playing."
+                      active={pluginsState === 'sync'}
+                      onclick={() => {
+                        close()
+                        setPlugins('sync')
+                      }}
+                    />
+                    <MenuItem
+                      label="Junction"
+                      description="Point FiveM’s plugins folder at this client (advanced)."
+                      active={pluginsState === 'junction'}
+                      onclick={() => {
+                        close()
+                        setPlugins('junction')
+                      }}
+                    />
+                  {/snippet}
+                </Menu>
+              </div>
+
+              <!-- Simple on/off toggles -->
+              {#each boolLinks as link (link.key)}
+                <div class="flex items-center gap-3 px-3 py-2.5">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium">{link.label}</p>
+                    <p class="text-xs text-muted-foreground">{link.hint}</p>
+                  </div>
+                  <Switch
+                    label={link.label}
+                    checked={selected.linkOptions[link.key]}
+                    onchange={(v) => setLinkBool(link.key, v)}
+                  />
+                </div>
+              {/each}
+            </div>
+          </div>
         </div>
 
-        {#if launchStatus}
-          <div class="flex items-center gap-2 border-t border-border px-4 py-2">
-            {#if launching}
-              <span
-                class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-muted border-t-primary"
-              ></span>
-            {/if}
-            <p
-              class="truncate text-xs {launchStatus.startsWith('WARNING')
-                ? 'text-destructive-foreground'
-                : 'text-muted-foreground'}"
-            >
-              {launchStatus}
-            </p>
+        <!-- Stats (decardified) + delete, pinned to the bottom -->
+        <div class="shrink-0 border-t border-divider p-4">
+          <div class="flex items-center gap-10">
+            <StatItem label="Files" value={stats ? stats.fileCount.toLocaleString() : '…'} />
+            <StatItem label="Size" value={stats ? formatBytes(stats.totalBytes) : '…'} />
+            <StatItem label="Last played" value={formatLastPlayed(selected.lastPlayed)} mono={false} />
           </div>
-        {/if}
+          <div class="mt-4">
+            <Button
+              variant="destructive"
+              icon="trash"
+              onclick={() => (deleteConfirmOpen = true)}
+            >
+              Delete client
+            </Button>
+          </div>
+        </div>
       {/if}
     </section>
   </main>
@@ -500,17 +662,24 @@
   {/if}
 
   <footer
-    class="flex h-8 shrink-0 items-center justify-between border-t border-border px-4 text-xs text-muted-foreground"
+    class="flex h-8 shrink-0 items-center justify-between gap-4 border-t border-divider px-4 text-xs text-muted-foreground"
   >
-    <span class="flex items-center gap-2">
-      FiveLaunch v{appVersion || '…'} (Tauri)
+    <div class="flex shrink-0 items-center gap-2">
+      <button
+        class="font-medium text-foreground/80 transition-colors hover:text-foreground"
+        use:tooltip={'Check for updates'}
+        onclick={() => (updateOpen = true)}
+      >
+        FiveLaunch v{appVersion || '…'}
+      </button>
       {#if pluginsSyncBusy}
-        <span class="rounded-full border border-primary/50 bg-primary/15 px-2 py-0.5 text-[10px]">
+        <span class="rounded-full bg-accent-wash px-2 py-0.5 text-[10px] text-primary">
           plugins sync running
         </span>
       {/if}
+      <span class="text-divider">·</span>
       <button
-        class="rounded px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground {logsOpen
+        class="rounded px-1.5 py-0.5 transition-colors hover:bg-surface-3 hover:text-foreground {logsOpen
           ? 'text-foreground'
           : ''}"
         onclick={() => (logsOpen = !logsOpen)}
@@ -518,31 +687,53 @@
         Logs{logs.length ? ` (${logs.length})` : ''}
       </button>
       <button
-        class="rounded px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
-        title="Backups moved out of FiveM.app live here"
+        class="rounded px-1.5 py-0.5 transition-colors hover:bg-surface-3 hover:text-foreground"
+        use:tooltip={'Backups moved out of FiveM.app live here'}
         onclick={() => (historyOpen = true)}
       >
         History
       </button>
-      {#if updateStatus?.isUpdateAvailable && updateStatus.latestUrl}
+      {#if updateStatus?.isUpdateAvailable}
         <button
-          class="rounded-full border border-primary/50 bg-primary/15 px-2 py-0.5 text-[10px] text-foreground transition-colors hover:bg-primary/25"
-          title="Open the release page"
-          onclick={() => updateStatus?.latestUrl && api.openUrl(updateStatus.latestUrl).catch(() => {})}
+          class="rounded-full bg-accent-wash px-2 py-0.5 text-[10px] text-primary transition-[filter] hover:brightness-110"
+          use:tooltip={'View and install the update'}
+          onclick={() => (updateOpen = true)}
         >
           Update available: v{updateStatus.latestVersion}
         </button>
       {/if}
-    </span>
-    <span class="truncate pl-4 font-mono">
-      {resolvedGamePath ?? 'FiveM not found — set the game path in settings'}
-    </span>
+    </div>
+
+    <div class="flex min-w-0 items-center gap-3">
+      <span
+        class="min-w-0 truncate font-mono text-muted-foreground/70"
+        use:tooltip={resolvedGamePath ?? undefined}
+      >
+        {resolvedGamePath ?? 'FiveM not found · set the game path in settings'}
+      </span>
+      <span class="shrink-0 text-divider">·</span>
+      <button
+        class="shrink-0 font-medium transition-colors hover:text-primary"
+        onclick={() => api.openUrl('https://fivelaunch.help').catch(() => {})}
+      >
+        fivelaunch.help
+      </button>
+      <span class="shrink-0 text-muted-foreground/70">© {new Date().getFullYear()} FiveLaunch</span>
+    </div>
   </footer>
 
   <SettingsDialog bind:open={settingsOpen} onSaved={refreshResolvedPath} />
   <FirstRunDialog bind:open={firstRunOpen} onContinue={acknowledgeFirstRun} />
-  <RefsDialog bind:open={refsOpen} client={selected} />
   <ClientDetailsDialog bind:open={detailsOpen} client={selected} {stats} onChanged={refresh} />
   <GtaSettingsDialog bind:open={gtaSettingsOpen} clientId={selectedId} />
   <HistoryDialog bind:open={historyOpen} />
+  <CreateClientDialog bind:open={createOpen} onCreated={onClientCreated} />
+  <UpdateDialog bind:open={updateOpen} />
+  <ConfirmDialog
+    bind:open={deleteConfirmOpen}
+    title="Delete client?"
+    message={`This permanently removes "${selected?.name ?? ''}" and its linked files. This cannot be undone.`}
+    confirmLabel="Delete client"
+    onConfirm={deleteSelected}
+  />
 </div>

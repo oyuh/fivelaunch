@@ -86,8 +86,30 @@ pub fn get_clients(state: State<'_, AppState>) -> Result<Vec<ClientProfile>, Str
 }
 
 #[tauri::command]
-pub fn create_client(state: State<'_, AppState>, name: String) -> Result<ClientProfile, String> {
-    state.store()?.create_client(name)
+pub fn create_client(
+    state: State<'_, AppState>,
+    name: String,
+    icon: Option<String>,
+) -> Result<ClientProfile, String> {
+    state.store()?.create_client(name, icon)
+}
+
+#[tauri::command]
+pub fn set_client_icon(
+    state: State<'_, AppState>,
+    id: String,
+    icon: Option<String>,
+) -> Result<(), String> {
+    state.store()?.set_icon(&id, icon)
+}
+
+#[tauri::command]
+pub fn set_client_pure_mode(
+    state: State<'_, AppState>,
+    id: String,
+    pure_mode: Option<u8>,
+) -> Result<(), String> {
+    state.store()?.set_pure_mode(&id, pure_mode)
 }
 
 #[tauri::command]
@@ -297,7 +319,21 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
         crate::tray::set_tray_status(Some(&format!("Launching {}…", client.name)));
     }
 
-    let deps = crate::core::launch::LaunchDeps::real();
+    // Production launch dependencies. FiveM pure-mode args are baked into the
+    // spawn closure so the launch pipeline's spawn stays argument-free.
+    let pure_args: Vec<String> = match client.pure_mode {
+        Some(level @ 1..=2) => vec![format!("-pure_{level}")],
+        _ => Vec::new(),
+    };
+    let spawn_fn =
+        move |exe: &std::path::Path| crate::core::process::spawn_detached(exe, &pure_args);
+    let gta_targets_fn = |o: Option<&str>| crate::core::gta_settings::gta_settings_targets(o);
+    let deps = crate::core::launch::LaunchDeps {
+        is_game_running: &crate::core::process::is_game_running,
+        spawn: &spawn_fn,
+        gta_targets: &gta_targets_fn,
+        citizen_fx_ini: &crate::core::paths::citizen_fx_ini_path,
+    };
 
     let launch_result = {
         let mut caches = caches.lock().map_err(|e| e.to_string())?;

@@ -33,6 +33,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(move |app| {
             // Global logger: stderr + ring buffer + live `app-log` events.
             let handle = app.handle().clone();
@@ -65,6 +67,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_clients,
             commands::create_client,
+            commands::set_client_icon,
+            commands::set_client_pure_mode,
             commands::delete_client,
             commands::rename_client,
             commands::update_client_links,

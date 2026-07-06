@@ -5,6 +5,10 @@ export interface ClientProfile {
   id: string
   name: string
   description?: string
+  /** Icon key from the client icon set (src/lib/components/ui/icons.ts). */
+  icon?: string
+  /** FiveM pure-mode level to launch with (1 or 2). Absent = off. */
+  pureMode?: number
   lastPlayed?: number
   linkOptions: LinkOptions
 }
