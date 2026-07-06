@@ -34,6 +34,14 @@ pub struct ClientProfile {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Icon key from the frontend client icon set. Optional and skipped when
+    /// absent so existing clients.json files round-trip byte-identically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// FiveM pure-mode level to launch with (1 or 2). None/absent = off.
+    /// Skipped when absent to keep clients.json byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pure_mode: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_played: Option<u64>,
     pub link_options: LinkOptions,
@@ -112,7 +120,7 @@ impl ClientStore {
         }
     }
 
-    pub fn create_client(&self, name: String) -> Result<ClientProfile, String> {
+    pub fn create_client(&self, name: String, icon: Option<String>) -> Result<ClientProfile, String> {
         let mut config = self.get_config();
         let id = uuid::Uuid::new_v4().to_string();
 
@@ -120,6 +128,8 @@ impl ClientStore {
             id: id.clone(),
             name,
             description: None,
+            icon,
+            pure_mode: None,
             last_played: Some(now_ms()),
             link_options: LinkOptions {
                 mods: true,
@@ -172,6 +182,25 @@ impl ClientStore {
             return Ok(()); // v1 silently no-ops on unknown id
         };
         client.name = name;
+        self.save_config(&config).map_err(|e| e.to_string())
+    }
+
+    pub fn set_icon(&self, id: &str, icon: Option<String>) -> Result<(), String> {
+        let mut config = self.get_config();
+        let Some(client) = config.clients.iter_mut().find(|c| c.id == id) else {
+            return Ok(());
+        };
+        client.icon = icon;
+        self.save_config(&config).map_err(|e| e.to_string())
+    }
+
+    pub fn set_pure_mode(&self, id: &str, pure_mode: Option<u8>) -> Result<(), String> {
+        let mut config = self.get_config();
+        let Some(client) = config.clients.iter_mut().find(|c| c.id == id) else {
+            return Ok(());
+        };
+        // Only 1 and 2 are valid pure levels; anything else clears it.
+        client.pure_mode = pure_mode.filter(|n| (1..=2).contains(n));
         self.save_config(&config).map_err(|e| e.to_string())
     }
 
@@ -264,7 +293,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(dir.path());
 
-        let client = store.create_client("Test".into()).unwrap();
+        let client = store.create_client("Test".into(), None).unwrap();
         assert!(uuid::Uuid::parse_str(&client.id).is_ok());
         assert_eq!(client.link_options.plugins_mode, Some(PluginsMode::Sync));
         assert!(client.link_options.mods && client.link_options.plugins);
@@ -284,7 +313,7 @@ mod tests {
     fn delete_removes_folder_and_selection() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(dir.path());
-        let client = store.create_client("Doomed".into()).unwrap();
+        let client = store.create_client("Doomed".into(), None).unwrap();
 
         let base = dir.path().join("clients").join(&client.id);
         assert!(base.exists());
@@ -298,7 +327,7 @@ mod tests {
     fn rename_and_update_links_persist() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(dir.path());
-        let client = store.create_client("Old".into()).unwrap();
+        let client = store.create_client("Old".into(), None).unwrap();
 
         store.rename_client(&client.id, "New".into()).unwrap();
         assert_eq!(store.get_client(&client.id).unwrap().name, "New");
@@ -325,7 +354,7 @@ mod tests {
     fn stats_count_real_files() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(dir.path());
-        let client = store.create_client("Stats".into()).unwrap();
+        let client = store.create_client("Stats".into(), None).unwrap();
 
         let mods = dir
             .path()
@@ -338,5 +367,40 @@ mod tests {
         // 128-byte mod + two empty placeholder settings files.
         assert_eq!(stats.total_bytes, 128);
         assert_eq!(stats.file_count, 3);
+    }
+
+    #[test]
+    fn icon_persists_and_is_omitted_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+
+        let with_icon = store
+            .create_client("Iconic".into(), Some("gamepad".into()))
+            .unwrap();
+        assert_eq!(with_icon.icon.as_deref(), Some("gamepad"));
+
+        let without = store.create_client("Plain".into(), None).unwrap();
+        assert!(without.icon.is_none());
+
+        // Set + clear the icon on the plain client.
+        store.set_icon(&without.id, Some("car".into())).unwrap();
+        assert_eq!(
+            store.get_client(&without.id).unwrap().icon.as_deref(),
+            Some("car")
+        );
+        store.set_icon(&without.id, None).unwrap();
+        assert!(store.get_client(&without.id).unwrap().icon.is_none());
+
+        // Pure mode: set a valid level, an invalid one clears it.
+        store.set_pure_mode(&without.id, Some(1)).unwrap();
+        assert_eq!(store.get_client(&without.id).unwrap().pure_mode, Some(1));
+        store.set_pure_mode(&without.id, Some(9)).unwrap();
+        assert_eq!(store.get_client(&without.id).unwrap().pure_mode, None);
+
+        // A client with neither an icon nor pure_mode must serialize neither
+        // key (byte-compat with v1 clients.json).
+        let json = serde_json::to_string(&store.get_client(&without.id).unwrap()).unwrap();
+        assert!(!json.contains("icon"), "unexpected icon key: {json}");
+        assert!(!json.contains("pureMode"), "unexpected pureMode key: {json}");
     }
 }

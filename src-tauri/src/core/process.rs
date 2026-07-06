@@ -27,8 +27,9 @@ pub fn is_game_running() -> bool {
 }
 
 /// Launch an executable fully detached from the launcher (no retained
-/// handle, no console). Port of v1 `spawnDetachedProcess`.
-pub fn spawn_detached(exe: &Path) -> io::Result<()> {
+/// handle, no console). Port of v1 `spawnDetachedProcess`, extended to pass
+/// command-line args (e.g. FiveM's `-pure_1` pure-mode flag).
+pub fn spawn_detached(exe: &Path, args: &[String]) -> io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -36,6 +37,7 @@ pub fn spawn_detached(exe: &Path) -> io::Result<()> {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
         std::process::Command::new(exe)
+            .args(args)
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
             .spawn()?;
         Ok(())
@@ -43,7 +45,7 @@ pub fn spawn_detached(exe: &Path) -> io::Result<()> {
 
     #[cfg(not(windows))]
     {
-        std::process::Command::new(exe).spawn()?;
+        std::process::Command::new(exe).args(args).spawn()?;
         Ok(())
     }
 }

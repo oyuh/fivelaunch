@@ -1,5 +1,6 @@
 <script lang="ts">
-  import Dialog from './ui/Dialog.svelte'
+  import Modal from './ui/Modal.svelte'
+  import Button from './ui/Button.svelte'
   import { api } from '../api'
   import { formatBytes } from '../format'
   import type { BackupEntry } from '../types'
@@ -57,23 +58,26 @@
   }
 </script>
 
-<Dialog
+<Modal
   bind:open
-  title="Backup History"
-  description="Everything FiveLaunch moved aside lives here instead of cluttering FiveM.app — original folders, isolated plugin sets, and replaced settings files."
-  maxWidth="max-w-2xl"
+  title="Backup history"
+  description="Everything FiveLaunch moved aside lives here instead of cluttering FiveM.app · original folders, isolated plugin sets, and replaced settings files."
+  icon="copy"
+  size="lg"
 >
-  <div class="mt-3 space-y-3">
+  <div class="space-y-3">
     <div class="flex items-center justify-between gap-2">
       <span class="text-xs text-muted-foreground">
         {loading ? 'Loading…' : `${entries.length} backup(s) stored`}
       </span>
-      <button
-        class="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+      <Button
+        variant="outline"
+        size="sm"
+        icon="folderOpen"
         onclick={() => api.openBackupsFolder().catch((e) => (error = String(e)))}
       >
         Open backups folder
-      </button>
+      </Button>
     </div>
 
     {#if error}
@@ -83,25 +87,25 @@
     {/if}
 
     {#if !loading && entries.length === 0}
-      <div class="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+      <div class="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
         No backups yet. When a launch needs to move an existing folder or settings file aside,
         it shows up here.
       </div>
     {:else}
       <div class="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
         {#each entries as entry (entry.name)}
-          <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/20 p-3">
+          <div class="flex items-center justify-between gap-3 rounded-lg bg-surface-2/60 p-3">
             <div class="min-w-0">
               <div class="truncate text-sm font-medium">{entry.kind}</div>
-              <div class="truncate text-xs text-muted-foreground">
+              <div class="truncate font-mono text-xs text-muted-foreground">
                 {formatDate(entry.createdMs)} · {describe(entry)}
               </div>
             </div>
             <button
-              class="shrink-0 rounded-md border px-3 py-1 text-xs transition-colors {confirmingDelete ===
+              class="shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors {confirmingDelete ===
               entry.name
-                ? 'border-destructive bg-destructive text-destructive-foreground'
-                : 'border-border text-muted-foreground hover:bg-secondary hover:text-foreground'}"
+                ? 'bg-destructive text-destructive-foreground'
+                : 'text-muted-foreground hover:bg-surface-3 hover:text-foreground'}"
               onclick={() => deleteEntry(entry.name)}
               onmouseleave={() => (confirmingDelete = null)}
             >
@@ -112,4 +116,4 @@
       </div>
     {/if}
   </div>
-</Dialog>
+</Modal>

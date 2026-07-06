@@ -1,5 +1,10 @@
 <script lang="ts">
-  import Dialog from './ui/Dialog.svelte'
+  import Modal from './ui/Modal.svelte'
+  import Button from './ui/Button.svelte'
+  import Input from './ui/Input.svelte'
+  import Switch from './ui/Switch.svelte'
+  import Icon from './ui/Icon.svelte'
+  import { tooltip } from '../actions/tooltip'
   import { api } from '../api'
   import {
     applyPrimaryHexToRoot,
@@ -104,9 +109,10 @@
     }
   }
 
-  async function toggleTray(): Promise<void> {
+  async function setTray(value: boolean): Promise<void> {
+    minimizeToTray = value
     try {
-      await api.setMinimizeToTrayOnGameLaunch(minimizeToTray)
+      await api.setMinimizeToTrayOnGameLaunch(value)
       onSaved?.()
     } catch (e) {
       saveError = String(e)
@@ -114,58 +120,79 @@
   }
 </script>
 
-<Dialog bind:open title="Global Settings" description="Set the default FiveM game data location (FiveM.app).">
-  <div class="mt-3 space-y-3">
-    <div class="flex gap-2">
-      <input
-        class="min-w-0 flex-1 rounded-md border border-input bg-secondary/40 px-3 py-1.5 font-mono text-sm outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
-        placeholder="C:\Users\...\AppData\Local\FiveM\FiveM.app"
-        bind:value={gamePath}
-      />
-      <button
-        class="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-        onclick={browse}
-        title="Pick your FiveM.app folder"
-      >
-        Browse
-      </button>
-      <button
-        class="shrink-0 rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-        disabled={!gamePath.trim()}
-        onclick={saveGamePath}
-      >
-        {savedFlash ? 'Saved!' : 'Save'}
-      </button>
+<Modal
+  bind:open
+  title="Global settings"
+  description="Set the default FiveM game data location (FiveM.app)."
+  icon="settings"
+>
+  <div class="space-y-4">
+    <div class="space-y-1.5">
+      <div class="flex items-center gap-1.5">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          FiveM.app location
+        </p>
+        <span
+          class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+          use:tooltip={"The folder where FiveM keeps its data (FiveM.app). FiveLaunch swaps each client's files in and out of here on launch. Usually %LOCALAPPDATA%\\FiveM\\FiveM.app."}
+        >
+          <Icon name="info" size={12} />
+        </span>
+      </div>
+      <div class="flex gap-2">
+        <Input
+          mono
+          bind:value={gamePath}
+          placeholder="C:\Users\...\AppData\Local\FiveM\FiveM.app"
+        />
+        <Button variant="outline" onclick={browse} title="Pick your FiveM.app folder">Browse</Button>
+        <Button variant="primary" disabled={!gamePath.trim()} onclick={saveGamePath}>
+          {savedFlash ? 'Saved!' : 'Save'}
+        </Button>
+      </div>
     </div>
 
-    <label
-      class="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-secondary/20 p-3 text-sm"
-    >
-      <input
-        type="checkbox"
-        class="mt-1 h-4 w-4 accent-primary"
-        bind:checked={minimizeToTray}
-        onchange={toggleTray}
+    <div class="flex items-center gap-3 rounded-lg bg-surface-2/60 p-3">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-1.5">
+          <p class="text-sm font-medium">Minimize to tray on launch</p>
+          <span
+            class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+            use:tooltip={'Hides FiveLaunch to the system tray when you launch a client, so it stays out of your way while you play. Click the tray icon to restore it.'}
+          >
+            <Icon name="info" size={12} />
+          </span>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          When you launch a client, FiveLaunch hides to the system tray. Click the tray icon to
+          restore.
+        </p>
+      </div>
+      <Switch
+        label="Minimize to tray on game launch"
+        checked={minimizeToTray}
+        onchange={setTray}
       />
-      <span>
-        <span class="block font-medium">Minimize to system tray on game launch</span>
-        <span class="block text-xs text-muted-foreground">
-          When you launch a client, FiveLaunch will hide to the tray. Click the tray icon to restore.
-          (Tray lands in Phase 6 — the setting persists now.)
-        </span>
-      </span>
-    </label>
+    </div>
 
-    <div class="rounded-md border border-border bg-secondary/20 p-3">
+    <div class="rounded-lg bg-surface-2/60 p-3">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <div class="text-sm font-medium">Theme color</div>
+          <div class="flex items-center gap-1.5">
+            <div class="text-sm font-medium">Theme color</div>
+            <span
+              class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+              use:tooltip={'Sets the accent color used on buttons, highlights, and the launch button. Pick any color; Reset returns to the default gold.'}
+            >
+              <Icon name="info" size={12} />
+            </span>
+          </div>
           <div class="text-xs text-muted-foreground">
             Changes the app primary color (buttons, highlights).
           </div>
         </div>
         <button
-          class="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          class="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-surface-3 hover:text-foreground"
           onclick={resetTheme}
         >
           Reset
@@ -179,7 +206,7 @@
           aria-label="Current theme color"
         ></div>
         <input
-          class="min-w-0 flex-1 rounded-md border border-input bg-secondary/40 px-3 py-1.5 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
+          class="min-w-0 flex-1 rounded-md border border-input bg-surface-2 px-3 py-1.5 font-mono text-sm outline-none transition focus:border-ring/40 focus:ring-2 focus:ring-ring/60"
           placeholder="#rrggbb"
           bind:value={hexDraft}
           oninput={onHexInput}
@@ -238,4 +265,4 @@
       </div>
     {/if}
   </div>
-</Dialog>
+</Modal>

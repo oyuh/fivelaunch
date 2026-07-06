@@ -29,20 +29,6 @@ pub struct LaunchDeps<'a> {
     pub citizen_fx_ini: &'a dyn Fn() -> Option<PathBuf>,
 }
 
-impl LaunchDeps<'_> {
-    /// Production wiring.
-    pub fn real() -> LaunchDeps<'static> {
-        LaunchDeps {
-            is_game_running: &super::process::is_game_running,
-            spawn: &|exe| super::process::spawn_detached(exe),
-            gta_targets: &|game_path_override| {
-                gta_settings::gta_settings_targets(game_path_override)
-            },
-            citizen_fx_ini: &paths::citizen_fx_ini_path,
-        }
-    }
-}
-
 /// Instructions for the caller after a successful launch.
 #[derive(Debug, Default)]
 pub struct LaunchOutcome {
@@ -228,7 +214,7 @@ mod tests {
         let app_paths = AppPaths::from_app_data(&app_data);
 
         let store = super::super::clients::ClientStore::new(&app_paths).unwrap();
-        let client = store.create_client("Test".into()).unwrap();
+        let client = store.create_client("Test".into(), None).unwrap();
 
         // Fake FiveM install; gamePath override points the resolver at it.
         let fivem_app = dir.path().join("FiveM").join("FiveM.app");

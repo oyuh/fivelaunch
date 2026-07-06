@@ -24,18 +24,26 @@ const QUALITY_LEVELS: SettingOption[] = [
   { value: '3', label: 'Ultra' }
 ]
 
+// Shadow / reflection quality: the lowest value (0) is Off, not Normal.
+const OFF_QUALITY_LEVELS: SettingOption[] = [
+  { value: '0', label: 'Off' },
+  { value: '1', label: 'Normal' },
+  { value: '2', label: 'High' },
+  { value: '3', label: 'Very High' },
+  { value: '4', label: 'Ultra' }
+]
+
+// Texture / water / shader quality: only three in-game steps.
+const SHORT_QUALITY: SettingOption[] = [
+  { value: '0', label: 'Normal' },
+  { value: '1', label: 'High' },
+  { value: '2', label: 'Very High' }
+]
+
 const SIMPLE_QUALITY: SettingOption[] = [
   { value: '0', label: 'Low' },
   { value: '1', label: 'Medium' },
   { value: '2', label: 'High' }
-]
-
-const EXTENDED_QUALITY: SettingOption[] = [
-  { value: '0', label: 'Very Low' },
-  { value: '1', label: 'Low' },
-  { value: '2', label: 'Medium' },
-  { value: '3', label: 'High' },
-  { value: '4', label: 'Very High' }
 ]
 
 const BOOLEAN_TOGGLE: SettingOption[] = [
@@ -116,8 +124,8 @@ const POSTFX_OPTIONS: SettingOption[] = [
 export const GTA_SETTINGS_MAP: Record<string, SettingDefinition> = {
   // Graphics Settings
   Tessellation: { type: 'select', options: TESSELLATION, category: 'Graphics Quality' },
-  ShadowQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Graphics Quality' },
-  ReflectionQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Graphics Quality' },
+  ShadowQuality: { type: 'select', options: OFF_QUALITY_LEVELS, category: 'Graphics Quality' },
+  ReflectionQuality: { type: 'select', options: OFF_QUALITY_LEVELS, category: 'Graphics Quality' },
   ReflectionMSAA: { type: 'select', options: REFLECTION_MSAA, category: 'Graphics Quality' },
   SSAO: { type: 'select', options: SSAO_OPTIONS, category: 'Graphics Quality' },
   AnisotropicFiltering: { type: 'select', options: ANISOTROPIC, category: 'Graphics Quality' },
@@ -131,11 +139,11 @@ export const GTA_SETTINGS_MAP: Record<string, SettingDefinition> = {
     category: 'Anti-Aliasing'
   },
   MSAAQuality: { type: 'select', options: SIMPLE_QUALITY, category: 'Anti-Aliasing' },
-  TextureQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Texture & Details' },
+  TextureQuality: { type: 'select', options: SHORT_QUALITY, category: 'Texture & Details' },
   ParticleQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Effects' },
-  WaterQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Graphics Quality' },
-  GrassQuality: { type: 'select', options: EXTENDED_QUALITY, category: 'Graphics Quality' },
-  ShaderQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Graphics Quality' },
+  WaterQuality: { type: 'select', options: SHORT_QUALITY, category: 'Graphics Quality' },
+  GrassQuality: { type: 'select', options: QUALITY_LEVELS, category: 'Graphics Quality' },
+  ShaderQuality: { type: 'select', options: SHORT_QUALITY, category: 'Graphics Quality' },
   Shadow_SoftShadows: { type: 'select', options: SHADOW_SOFT, category: 'Shadows' },
   PostFX: { type: 'select', options: POSTFX_OPTIONS, category: 'Effects' },
   DX_Version: { type: 'select', options: DX_VERSION, category: 'Advanced' },
@@ -248,6 +256,59 @@ export const SETTING_CATEGORIES = [
 ] as const
 
 export type SettingCategory = (typeof SETTING_CATEGORIES)[number]
+
+/** Plain-language help shown as a `?` tooltip next to each setting. */
+export const SETTING_HELP: Record<string, string> = {
+  Tessellation:
+    'Adds fine geometric detail to surfaces like roads, tires, and terrain. Higher looks smoother but costs GPU.',
+  ShadowQuality:
+    'Resolution and detail of shadows. Higher is sharper and more stable; Off disables most dynamic shadows.',
+  ReflectionQuality:
+    'Detail of reflections on water, glass, and shiny surfaces. One of the more demanding settings.',
+  ReflectionMSAA: 'Anti-aliasing applied to reflections to reduce shimmering on reflective surfaces.',
+  SSAO: 'Ambient occlusion adds soft contact shadows where objects and surfaces meet, adding depth.',
+  AnisotropicFiltering:
+    'Keeps textures sharp at shallow viewing angles (e.g. roads into the distance). Cheap — usually set to x16.',
+  MSAA: 'Multi-sample anti-aliasing smooths jagged edges. Higher is cleaner but heavy on the GPU.',
+  MSAAFragments: 'Advanced MSAA fragment setting. Leave default unless you know you need it.',
+  MSAAQuality: 'Advanced MSAA quality setting. Leave default unless you know you need it.',
+  TextureQuality: 'Resolution of textures. Higher looks crisper but uses more video memory (VRAM).',
+  ParticleQuality: 'Detail and count of particle effects like fire, smoke, sparks, and explosions.',
+  WaterQuality: 'Detail and simulation quality of water surfaces.',
+  GrassQuality:
+    'Density and detail of grass and foliage. Ultra fills large areas with plants and is very demanding.',
+  ShaderQuality: 'Complexity of shaders that drive lighting and surface effects.',
+  Shadow_SoftShadows:
+    'How soft shadow edges are — from sharp (aliased) to very soft (PCSS-style) blurring.',
+  PostFX: 'Post-processing effects: bloom, light shafts, tone mapping, and lens effects.',
+  DX_Version: 'DirectX version used to render. DirectX 11 is recommended on modern GPUs.',
+  UltraShadows_Enabled: 'Extra-high-detail shadows near the camera. Costs performance for sharper close shadows.',
+  DoF: 'Depth of field blurs objects outside the focal plane for a cinematic look (needs High+ Post FX).',
+  MotionBlurStrength: 'Amount of blur applied when the camera moves quickly. 0 disables it.',
+  LodScale:
+    'Overall level-of-detail distance. Higher renders detailed models farther out (more CPU/GPU cost).',
+  MaxLodScale: 'Maximum extended distance for detailed models. Higher increases draw distance.',
+  PedLodBias: 'How far away pedestrians keep their higher-detail models before dropping to low detail.',
+  VehicleLodBias: 'How far away vehicles keep their higher-detail models before dropping to low detail.',
+  CityDensity: 'Amount of traffic and pedestrians spawned in the world.',
+  PedVarietyMultiplier: 'Variety of pedestrian models on screen at once.',
+  VehicleVarietyMultiplier: 'Variety of vehicle models on screen at once.',
+  Shadow_Distance: 'How far shadows are rendered from the camera.',
+  VSync: 'Synchronizes the frame rate to your monitor to prevent screen tearing (can add input lag).',
+  Windowed: 'Display mode: Fullscreen (best performance), Windowed, or Borderless.',
+  PauseOnFocusLoss: 'Pauses the game when you alt-tab away from it.',
+  AspectRatio: 'Force a specific aspect ratio, or Auto to match your resolution.',
+  SamplingMode: 'Upscaling / anti-aliasing method (MSAA, AMD CAS/FSR, or NVIDIA DLSS if supported).',
+  ScreenWidth: 'Horizontal resolution in pixels.',
+  ScreenHeight: 'Vertical resolution in pixels.',
+  RefreshRate: 'Monitor refresh rate in Hz.',
+  HdStreamingInFlight: 'Streams high-detail assets more aggressively. Can reduce texture pop-in.',
+  TripleBuffered: 'Triple buffering can smooth frame pacing when VSync is on.'
+}
+
+export function getSettingHelp(settingName: string): string | null {
+  return SETTING_HELP[settingName] ?? null
+}
 
 export function getSettingDefinition(settingName: string): SettingDefinition | null {
   return GTA_SETTINGS_MAP[settingName] || null

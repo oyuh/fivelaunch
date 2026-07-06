@@ -13,12 +13,18 @@ export default defineConfig({
     postcss: { plugins: [] }
   },
 
+  // Restrict dependency scanning to our own HTML entries so Vite doesn't crawl
+  // into the local (gitignored) v1/ Electron+React app and fail on its imports.
+  optimizeDeps: {
+    entries: ['index.html', 'index.preview.html']
+  },
+
   // Tauri expects a fixed port; fail if unavailable instead of picking another.
   server: {
     port: 5173,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**']
+      ignored: ['**/src-tauri/**', '**/v1/**']
     }
   },
 

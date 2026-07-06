@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "FiveLaunch",
-  "version": "2.0.0",
+  "version": "2.3.81",
   "identifier": "com.lawsonhart.fivelaunch",
   "build": {
     "frontendDist": "../dist",
@@ -31,12 +31,32 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "publisher": "Lawson Hart",
+    "licenseFile": "installer-info.txt",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/oyuh/fivelaunch/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJENDI2RTEyREQwQTg4NDQKUldSRWlBcmRFbTVDdlV0K1BhZFE2SS8xMkZtNlFvWG1NM3Z4YnR1VzloRVFlR0ZrSU14Z3lGUEgK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

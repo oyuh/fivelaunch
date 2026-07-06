@@ -1,0 +1,17 @@
+FiveLaunch — FiveM profile launcher
+by Lawson Hart · fivelaunch.help
+
+WHAT IT DOES
+FiveLaunch lets you keep multiple FiveM "clients" (profiles), each with its own
+mods, plugins, citizen data, and GTA V graphics settings. When you launch a
+client, FiveLaunch swaps those files into your FiveM install for you, then puts
+everything back the way it was after you play.
+
+BEFORE YOU START — BACK UP YOUR DATA
+The first time you link a client, FiveLaunch moves your existing FiveM files
+aside (into a managed backups folder). Please make sure you have a copy of your
+current FiveM.app mods/plugins/citizen folders, your GTA V settings.xml, and your
+CitizenFX.ini before linking. You'll confirm this inside the app on first run.
+
+Installs per-user (no admin required) and updates itself automatically from
+GitHub releases.
