@@ -106,3 +106,26 @@ jobs:
             Write-Host "Creating release: $tag"
             gh release create $tag @assets --title $tag --generate-notes
           }
+
+      # Tell the docs site (oyuh/fivelaunch-docs) to regenerate + redeploy.
+      # Needs a repo-scoped PAT stored as the DOCS_DISPATCH_TOKEN secret; if it's
+      # absent this step no-ops so it never blocks a release.
+      - name: Notify docs site
+        env:
+          DOCS_TOKEN: ${{ secrets.DOCS_DISPATCH_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DOCS_TOKEN)) {
+            Write-Host "DOCS_DISPATCH_TOKEN not set; skipping docs dispatch."
+            exit 0
+          }
+          $tag = "${{ github.ref_name }}"
+          $body = @{ event_type = "fivelaunch-released"; client_payload = @{ tag = $tag } } | ConvertTo-Json
+          Invoke-RestMethod -Method Post `
+            -Uri "https://api.github.com/repos/oyuh/fivelaunch-docs/dispatches" `
+            -Headers @{
+              Authorization = "Bearer $env:DOCS_TOKEN"
+              Accept        = "application/vnd.github+json"
+              "User-Agent"  = "fivelaunch-release"
+            } `
+            -Body $body
+          Write-Host "Dispatched fivelaunch-released to docs."
