@@ -87,11 +87,15 @@ let backups: Array<Record<string, unknown>> = [
   }
 ]
 
+// Version shown throughout the preview. Defaults to a recent release and is
+// updated to the real latest GitHub release tag in boot() before mounting.
+let appVersion = '2.3.81'
+
 const seedLogs: AppLogEntry[] = [
-  { id: 1, ts: Date.now() - 61_000, level: 'info', message: 'FiveLaunch v2.0.0 started', source: 'main' },
+  { id: 1, ts: Date.now() - 61_000, level: 'info', message: `FiveLaunch v${appVersion} started`, source: 'main' },
   { id: 2, ts: Date.now() - 60_000, level: 'info', message: 'Resolved FiveM.app at C:\\Users\\you\\AppData\\Local\\FiveM\\FiveM.app', source: 'main' },
   { id: 3, ts: Date.now() - 45_000, level: 'debug', message: 'Loaded 5 clients from clients.json', source: 'main' },
-  { id: 4, ts: Date.now() - 30_000, level: 'warn', message: 'Update available: v2.5.0', source: 'main' },
+  { id: 4, ts: Date.now() - 30_000, level: 'info', message: 'Checked for updates: up to date', source: 'main' },
   { id: 5, ts: Date.now() - 12_000, level: 'info', message: 'Preparing launch for "Main RP"…', source: 'launch' },
   { id: 6, ts: Date.now() - 11_000, level: 'info', message: 'Linking mods folder (junction)', source: 'launch' },
   { id: 7, ts: Date.now() - 10_000, level: 'error', message: 'Failed to sync plugin "reshade" — access denied', source: 'launch' }
@@ -175,7 +179,7 @@ mockIPC((cmd, payload) => {
     case 'browse_game_path':
       return 'C:\\Users\\you\\AppData\\Local\\FiveM\\FiveM.app'
     case 'get_app_version':
-      return '2.0.0'
+      return appVersion
 
     // Launch — delay so the "Launching…" state is visible in the preview.
     case 'launch_client':
@@ -190,10 +194,10 @@ mockIPC((cmd, payload) => {
       return seedLogs
     case 'get_update_status':
       return {
-        currentVersion: '2.0.0',
-        latestVersion: '2.5.0',
-        latestUrl: 'https://github.com/oyuh/fivelaunch/releases/tag/v2.5.0',
-        isUpdateAvailable: true,
+        currentVersion: appVersion,
+        latestVersion: appVersion,
+        latestUrl: `https://github.com/oyuh/fivelaunch/releases/tag/v${appVersion}`,
+        isUpdateAvailable: false,
         checkedAt: Date.now(),
         source: 'releases-latest'
       }
@@ -231,12 +235,43 @@ async function boot(): Promise<void> {
   // Skip the first-run welcome dialog while iterating (add ?firstrun to see it).
   if (!params.has('firstrun')) localStorage.setItem('fivelaunch.firstRunAck', 'true')
 
+  // Show the real latest release version in the preview (best-effort; falls back
+  // to the default above). Done before mounting so the UI reads it on first render.
+  try {
+    const res = await fetch(
+      'https://api.github.com/repos/oyuh/fivelaunch/releases/latest',
+      { headers: { Accept: 'application/vnd.github+json' } }
+    )
+    if (res.ok) {
+      const data = (await res.json()) as { tag_name?: string }
+      const tag = String(data?.tag_name ?? '').replace(/^v/, '')
+      if (tag) {
+        appVersion = tag
+        if (seedLogs[0]) seedLogs[0].message = `FiveLaunch v${appVersion} started`
+      }
+    }
+  } catch {
+    // keep the fallback version
+  }
+
   if (screen === 'styleguide') {
     const StyleGuide = (await import('./lib/design/StyleGuide.svelte')).default
     mount(StyleGuide, { target })
   } else {
     const App = (await import('./App.svelte')).default
     mount(App, { target })
+
+    // Preview convenience (e.g. the docs landing embed): preselect the first
+    // client so the detail panel is populated immediately, without changing the
+    // real app's default of no selection.
+    const preselect = (tries = 0): void => {
+      const btn = Array.from(document.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Main RP')
+      )
+      if (btn) btn.click()
+      else if (tries < 20) setTimeout(() => preselect(tries + 1), 50)
+    }
+    setTimeout(() => preselect(), 60)
   }
 }
 
