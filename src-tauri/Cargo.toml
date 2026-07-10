@@ -1,6 +1,6 @@
 [package]
 name = "fivelaunch"
-version = "2.5.2"
+version = "2.5.3"
 description = "FiveLaunch - launch FiveM with select mods and settings"
 authors = ["Lawson Hart"]
 license = "SEE LICENSE IN LICENSE"
