@@ -31,6 +31,12 @@
   let saveError = $state<string | null>(null)
   let savedFlash = $state(false)
 
+  // Snapshot ("My Setup") state
+  let snapshotClient = $state<{ id: string; name: string } | null>(null)
+  let snapshotBusy = $state(false)
+  let snapshotFlash = $state<string | null>(null)
+  let snapshotError = $state<string | null>(null)
+
   // (Re)load settings each time the dialog opens.
   $effect(() => {
     if (!open) return
@@ -42,11 +48,56 @@
         const hex = settings.themePrimaryHex ?? DEFAULT_PRIMARY_HEX
         hexDraft = hex
         hsl = hexToHsl(hex)
+        snapshotError = null
+        snapshotFlash = null
+        await loadSnapshotState(settings.snapshotClientId ?? null)
       } catch (e) {
         saveError = String(e)
       }
     })()
   })
+
+  async function loadSnapshotState(id: string | null): Promise<void> {
+    if (!id) {
+      snapshotClient = null
+      return
+    }
+    const clients = await api.getClients()
+    const found = clients.find((c) => c.id === id)
+    snapshotClient = found ? { id: found.id, name: found.name } : null
+  }
+
+  async function createSnapshot(): Promise<void> {
+    if (snapshotBusy) return
+    snapshotBusy = true
+    snapshotError = null
+    try {
+      const created = await api.createSnapshotClient()
+      snapshotClient = { id: created.id, name: created.name }
+      snapshotFlash = 'Snapshot created!'
+      setTimeout(() => (snapshotFlash = null), 2000)
+      onSaved?.()
+    } catch (e) {
+      snapshotError = String(e)
+    } finally {
+      snapshotBusy = false
+    }
+  }
+
+  async function restoreSnapshotNow(): Promise<void> {
+    if (snapshotBusy) return
+    snapshotBusy = true
+    snapshotError = null
+    try {
+      await api.restoreSnapshotNow()
+      snapshotFlash = 'Your setup is restored!'
+      setTimeout(() => (snapshotFlash = null), 2000)
+    } catch (e) {
+      snapshotError = String(e)
+    } finally {
+      snapshotBusy = false
+    }
+  }
 
   const hueTrack =
     'linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)'
@@ -280,6 +331,59 @@
           <span class="w-12 text-right font-mono text-xs text-muted-foreground">{hsl.l}%</span>
         </div>
       </div>
+    </div>
+
+    <!-- Snapshot -->
+    <div class="rounded-lg bg-surface-2/60 p-3">
+      <div class="flex items-center gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5">
+            <p class="text-sm font-medium">Snapshot · My Setup</p>
+            <span
+              class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+              use:tooltip={'Your baseline FiveM state, kept as a client. After every session (and on demand here), FiveM goes back to it — mods, plugins, citizen, GTA settings, CitizenFX.ini.'}
+            >
+              <Icon name="info" size={12} />
+            </span>
+          </div>
+          <p class="text-xs text-muted-foreground">
+            {#if snapshotClient}
+              Baseline: <span class="font-medium text-foreground">{snapshotClient.name}</span> ·
+              every session restores to it on close.
+            {:else}
+              No snapshot yet. Capture your current FiveM files as the baseline that every
+              session returns to.
+            {/if}
+          </p>
+        </div>
+        {#if snapshotClient}
+          <Button
+            variant="outline"
+            size="sm"
+            icon="refresh"
+            loading={snapshotBusy}
+            onclick={restoreSnapshotNow}
+            title="Put FiveM back to your snapshot right now"
+          >
+            {snapshotFlash ?? 'Restore now'}
+          </Button>
+        {:else}
+          <Button
+            variant="primary"
+            size="sm"
+            icon="copy"
+            loading={snapshotBusy}
+            onclick={createSnapshot}
+          >
+            {snapshotFlash ?? 'Create snapshot'}
+          </Button>
+        {/if}
+      </div>
+      {#if snapshotError}
+        <div class="mt-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs">
+          {snapshotError}
+        </div>
+      {/if}
     </div>
 
     <!-- Danger zone -->

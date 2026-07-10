@@ -16,6 +16,11 @@ pub struct AppSettings {
     pub minimize_to_tray_on_game_launch: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme_primary_hex: Option<String>,
+    /// The snapshot ("My Setup") client that live FiveM state returns to
+    /// after each session. Absent until the user creates one, so pre-snapshot
+    /// settings.json files round-trip unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_client_id: Option<String>,
 }
 
 /// v1 `isHexColor`: trimmed `#` + exactly 6 hex digits.
@@ -73,6 +78,12 @@ pub fn set_game_path(path: &Path, game_path: String) -> Result<(), String> {
 pub fn set_minimize_to_tray_on_game_launch(path: &Path, enabled: bool) -> Result<(), String> {
     let mut settings = load(path);
     settings.minimize_to_tray_on_game_launch = enabled;
+    save(path, &settings)
+}
+
+pub fn set_snapshot_client_id(path: &Path, id: Option<String>) -> Result<(), String> {
+    let mut settings = load(path);
+    settings.snapshot_client_id = id;
     save(path, &settings)
 }
 

@@ -69,6 +69,10 @@ let clients: ClientProfile[] = [
 // The most recently launched client, persisted backend-side in the real app.
 let selectedClientId: string | null = null
 
+// Snapshot ("My Setup") client id — Main RP doubles as the snapshot in the
+// preview so the badge and restore flows are visible.
+let snapshotClientId: string | null = 'id-main'
+
 let backups: Array<Record<string, unknown>> = [
   {
     name: 'mods_1751700000000',
@@ -185,7 +189,26 @@ mockIPC((cmd, payload) => {
     case 'delete_client':
       clients = clients.filter((c) => c.id !== args.id)
       if (selectedClientId === args.id) selectedClientId = null
+      if (snapshotClientId === args.id) snapshotClientId = null
       return null
+    case 'set_client_restore_on_close':
+      clients = clients.map((c) =>
+        c.id === args.id ? { ...c, restoreOnClose: Boolean(args.enabled) } : c
+      )
+      return null
+    case 'create_snapshot_client': {
+      const created = client(`id-snapshot-${Date.now()}`, 'My Setup', 'shield', Date.now(), {
+        citizen: true,
+        gtaSettings: true,
+        citizenFxIni: true,
+        pluginsMode: 'junction'
+      })
+      clients = [...clients, created]
+      snapshotClientId = created.id
+      return created
+    }
+    case 'restore_snapshot_now':
+      return new Promise((resolve) => setTimeout(resolve, 900))
     case 'update_client_links':
       clients = clients.map((c) =>
         c.id === args.id
@@ -196,7 +219,11 @@ mockIPC((cmd, payload) => {
 
     // Settings
     case 'get_settings':
-      return { minimizeToTrayOnGameLaunch: false, themePrimaryHex: '#f59e0b' }
+      return {
+        minimizeToTrayOnGameLaunch: false,
+        themePrimaryHex: '#f59e0b',
+        ...(snapshotClientId ? { snapshotClientId } : {})
+      }
     case 'get_resolved_game_path':
       return 'C:\\Users\\you\\AppData\\Local\\FiveM\\FiveM.app'
     case 'browse_game_path':

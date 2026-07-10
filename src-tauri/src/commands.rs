@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
@@ -23,6 +24,10 @@ pub type MirrorCaches = HashMap<String, HashMap<String, f64>>;
 pub struct LaunchRuntime {
     pub plugins: Option<RuntimeSyncHandle>,
     pub tasks: Vec<BackgroundTask>,
+    /// Restore-on-close watcher. Kept out of `tasks` because it observes the
+    /// other tasks' finished-flags — it must be stoppable first so it can't
+    /// fire a restore in the middle of a teardown.
+    pub restore: Option<BackgroundTask>,
 }
 
 impl LaunchRuntime {
@@ -33,6 +38,9 @@ impl LaunchRuntime {
     }
 
     pub fn stop_all(&mut self) {
+        if let Some(mut restore) = self.restore.take() {
+            restore.stop_and_join();
+        }
         if let Some(mut plugins) = self.plugins.take() {
             plugins.stop_and_join();
         }
@@ -130,7 +138,99 @@ pub fn set_client_pure_mode(
 
 #[tauri::command]
 pub fn delete_client(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    state.store()?.delete_client(&id)
+    state.store()?.delete_client(&id)?;
+    // Deleting the snapshot client turns restore-on-close off app-wide;
+    // drop the dangling reference so the UI offers to create a new one.
+    let settings_file = state.paths.settings_file();
+    if settings::load(&settings_file).snapshot_client_id.as_deref() == Some(id.as_str()) {
+        settings::set_snapshot_client_id(&settings_file, None)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_client_restore_on_close(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    state.store()?.set_restore_on_close(&id, enabled)
+}
+
+/// Create the snapshot ("My Setup") client from the current live FiveM state.
+#[tauri::command]
+pub async fn create_snapshot_client(
+    state: State<'_, AppState>,
+    name: Option<String>,
+) -> Result<ClientProfile, String> {
+    let paths = state.paths.clone();
+    // Capture can move/copy multi-GB folders — keep it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        if crate::core::process::is_game_running() {
+            return Err("Please close GTA V and FiveM before creating a snapshot.".into());
+        }
+        let app_settings = settings::load(&paths.settings_file());
+        if let Some(existing) = &app_settings.snapshot_client_id {
+            if paths.clients_data().join(existing).exists() {
+                return Err("A snapshot client already exists.".into());
+            }
+        }
+        let game_path_override = app_settings.game_path;
+        let name = name.unwrap_or_else(|| crate::core::snapshot::DEFAULT_SNAPSHOT_NAME.into());
+        let targets = crate::core::gta_settings::gta_settings_targets(game_path_override.as_deref());
+        let ini = crate::core::paths::citizen_fx_ini_path();
+        crate::core::snapshot::capture_snapshot_client(
+            &paths,
+            game_path_override.as_deref(),
+            &name,
+            &targets,
+            ini.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Manually restore the snapshot baseline (the same thing restore-on-close
+/// does after a session). Handy while testing setups.
+#[tauri::command]
+pub async fn restore_snapshot_now(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+
+        if crate::core::process::is_game_running() {
+            return Err("Please close GTA V and FiveM before restoring.".into());
+        }
+
+        let state = app.state::<AppState>();
+        // Wind down any leftover session work before touching live folders.
+        if let Ok(mut guard) = state.runtime.lock() {
+            guard.stop_all();
+        }
+
+        let app_settings = settings::load(&state.paths.settings_file());
+        let snapshot_id = app_settings
+            .snapshot_client_id
+            .clone()
+            .ok_or("No snapshot has been created yet.")?;
+        let game_path_override = app_settings.game_path;
+        let targets = crate::core::gta_settings::gta_settings_targets(game_path_override.as_deref());
+        let ini = crate::core::paths::citizen_fx_ini_path();
+
+        let mut status = |message: &str| {
+            let _ = app.emit("launch-status", message);
+        };
+        crate::core::snapshot::restore_baseline(
+            &state.paths,
+            &snapshot_id,
+            game_path_override.as_deref(),
+            &targets,
+            ini.as_deref(),
+            &mut status,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -452,15 +552,20 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
     }
 
     // GTA settings enforcement: fight FiveM's profile sync for a few
-    // minutes after spawn.
+    // minutes after spawn. The restore watcher cancels it as soon as the
+    // game exits (it has no final pass to protect), so a short session
+    // doesn't hold the restore hostage for the full enforcement window.
+    let mut session_end_stops: Vec<Arc<AtomicBool>> = Vec::new();
     if let Some(plan) = outcome.gta_enforcement {
-        new_runtime.tasks.push(BackgroundTask::spawn(move |stop| {
+        let task = BackgroundTask::spawn(move |stop| {
             crate::core::gta_settings::run_gta_settings_enforcement(
                 &plan,
                 &crate::core::gta_settings::EnforcementConfig::default(),
                 &stop,
             );
-        }));
+        });
+        session_end_stops.push(task.stop.clone());
+        new_runtime.tasks.push(task);
     }
 
     // Restore from tray when the game exits (v1 startRestoreOnGameExit).
@@ -479,11 +584,151 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
         }
     }
 
+    // Restore-on-close: once this session fully winds down (game exits AND
+    // every sync/finalize pass completes), point the live FiveM state back at
+    // the snapshot baseline. Skipped when the client opted out or when no
+    // snapshot client exists yet.
+    if client.restore_on_close_enabled() {
+        let snapshot = app_settings
+            .snapshot_client_id
+            .clone()
+            .filter(|sid| paths.clients_data().join(sid).exists());
+        if let Some(snapshot_id) = snapshot {
+            let wait_for: Vec<Arc<AtomicBool>> = new_runtime
+                .tasks
+                .iter()
+                .map(BackgroundTask::finished_flag)
+                .chain(new_runtime.plugins.as_ref().map(RuntimeSyncHandle::finished_flag))
+                .collect();
+            // If the game never actually starts there is no session work to
+            // finalize — everything can be stopped before restoring.
+            let mut never_ran_stops: Vec<Arc<AtomicBool>> =
+                new_runtime.tasks.iter().map(|t| t.stop.clone()).collect();
+            if let Some(p) = &new_runtime.plugins {
+                never_ran_stops.push(p.stop.clone());
+            }
+
+            let app = app.clone();
+            let paths = paths.clone();
+            let game_path_override = app_settings.game_path.clone();
+            new_runtime.restore = Some(BackgroundTask::spawn(move |stop| {
+                run_restore_watcher(
+                    &app,
+                    &paths,
+                    &snapshot_id,
+                    game_path_override.as_deref(),
+                    &wait_for,
+                    &session_end_stops,
+                    &never_ran_stops,
+                    &stop,
+                );
+            }));
+        }
+    }
+
     if let Ok(mut guard) = runtime.lock() {
         *guard = new_runtime;
     }
 
     Ok(())
+}
+
+/// Wait for the launched session to end, let every background sync task
+/// drain, then restore the snapshot baseline. Never locks the LaunchRuntime —
+/// it only reads the shared flags captured at spawn time, so `stop_all` can
+/// join it without deadlocking.
+#[allow(clippy::too_many_arguments)]
+fn run_restore_watcher(
+    app: &tauri::AppHandle,
+    paths: &AppPaths,
+    snapshot_id: &str,
+    game_path_override: Option<&str>,
+    wait_for: &[Arc<AtomicBool>],
+    session_end_stops: &[Arc<AtomicBool>],
+    never_ran_stops: &[Arc<AtomicBool>],
+    stop: &AtomicBool,
+) {
+    use tauri::Emitter;
+
+    let emit = |message: &str| {
+        let _ = app.emit("launch-status", message);
+    };
+    let sleep_responsive = |total_ms: u64| -> bool {
+        // Returns false when stopped mid-sleep.
+        for _ in 0..(total_ms / 50).max(1) {
+            if stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        true
+    };
+
+    // Phase 1: track the session (60s grace for the game to appear, like the
+    // tray watcher).
+    let started = std::time::Instant::now();
+    let mut game_seen = false;
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let running = crate::core::process::is_game_running();
+        if running {
+            game_seen = true;
+        } else if game_seen {
+            break; // session over
+        } else if started.elapsed() > std::time::Duration::from_secs(60) {
+            break; // game never started; links were applied, still restore
+        }
+        if !sleep_responsive(1_000) {
+            return;
+        }
+    }
+
+    // Phase 2: wind down. Enforcement has no final pass — cancel it now.
+    // When the game never ran there are no session changes to finalize, so
+    // everything can be cancelled.
+    let stops = if game_seen { session_end_stops } else { never_ran_stops };
+    for flag in stops {
+        flag.store(true, Ordering::SeqCst);
+    }
+
+    // Phase 3: wait for every sync/finalize pass to complete. Restoring while
+    // a prefer-newest pass is still running would copy snapshot files into the
+    // just-closed client, so on timeout we skip the restore instead.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    while !wait_for.iter().all(|f| f.load(Ordering::SeqCst)) {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        if std::time::Instant::now() > deadline {
+            log::warn!("Restore-on-close skipped: background sync still busy after 10 minutes");
+            emit("WARNING: Restore skipped — background sync still busy.");
+            return;
+        }
+        if !sleep_responsive(100) {
+            return;
+        }
+    }
+
+    // Phase 4: restore the baseline.
+    let targets = crate::core::gta_settings::gta_settings_targets(game_path_override);
+    let ini = crate::core::paths::citizen_fx_ini_path();
+    let mut status = |message: &str| emit(message);
+    match crate::core::snapshot::restore_baseline(
+        paths,
+        snapshot_id,
+        game_path_override,
+        &targets,
+        ini.as_deref(),
+        &mut status,
+    ) {
+        Ok(()) => log::info!("Restored snapshot baseline after session"),
+        Err(err) => {
+            log::error!("Restore-on-close failed: {err}");
+            emit(&format!("WARNING: Could not restore your setup: {err}"));
+        }
+    }
 }
 
 /// Wait for the game to appear (60s grace) and then exit; restore the window.

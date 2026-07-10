@@ -44,7 +44,20 @@ pub struct ClientProfile {
     pub pure_mode: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_played: Option<u64>,
+    /// Restore the snapshot ("My Setup") client's files after this client's
+    /// session ends. Absent = ON (the safe default for every client, old and
+    /// new); only an explicit user opt-out writes `false`. Skipped when absent
+    /// so v1 clients.json files round-trip byte-identically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_on_close: Option<bool>,
     pub link_options: LinkOptions,
+}
+
+impl ClientProfile {
+    /// Effective restore-on-close: on unless explicitly disabled.
+    pub fn restore_on_close_enabled(&self) -> bool {
+        self.restore_on_close != Some(false)
+    }
 }
 
 /// What to carry over when duplicating a client. Folder flags copy the
@@ -179,6 +192,7 @@ impl ClientStore {
             icon,
             pure_mode: None,
             last_played: Some(now_ms()),
+            restore_on_close: None,
             link_options: LinkOptions {
                 mods: true,
                 plugins: true,
@@ -220,6 +234,11 @@ impl ClientStore {
             icon: source.icon.clone(),
             pure_mode: if options.config { source.pure_mode } else { None },
             last_played: Some(now_ms()),
+            restore_on_close: if options.config {
+                source.restore_on_close
+            } else {
+                None
+            },
             link_options: if options.config {
                 source.link_options.clone()
             } else {
@@ -300,6 +319,15 @@ impl ClientStore {
         };
         // Only 1 and 2 are valid pure levels; anything else clears it.
         client.pure_mode = pure_mode.filter(|n| (1..=2).contains(n));
+        self.save_config(&config).map_err(|e| e.to_string())
+    }
+
+    pub fn set_restore_on_close(&self, id: &str, enabled: bool) -> Result<(), String> {
+        let mut config = self.get_config();
+        let Some(client) = config.clients.iter_mut().find(|c| c.id == id) else {
+            return Ok(());
+        };
+        client.restore_on_close = Some(enabled);
         self.save_config(&config).map_err(|e| e.to_string())
     }
 

@@ -10,6 +10,11 @@ export interface ClientProfile {
   /** FiveM pure-mode level to launch with (1 or 2). Absent = off. */
   pureMode?: number
   lastPlayed?: number
+  /**
+   * Restore the snapshot ("My Setup") client's files after this client's
+   * session ends. Absent = ON; only an explicit opt-out stores false.
+   */
+  restoreOnClose?: boolean
   linkOptions: LinkOptions
 }
 
@@ -50,6 +55,8 @@ export interface AppSettings {
   gamePath?: string
   minimizeToTrayOnGameLaunch: boolean
   themePrimaryHex?: string
+  /** The snapshot ("My Setup") client id; absent until one is created. */
+  snapshotClientId?: string
 }
 
 export interface GameBusyState {

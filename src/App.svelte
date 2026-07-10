@@ -50,6 +50,10 @@
   let historyOpen = $state(false)
   let deleteConfirmOpen = $state(false)
   let duplicateOpen = $state(false)
+  let restoreOffConfirmOpen = $state(false)
+
+  // Snapshot ("My Setup") — the baseline client every session returns to.
+  let snapshotClientId = $state<string | null>(null)
   let updateOpen = $state(false)
   let logsOpen = $state(false)
 
@@ -88,6 +92,7 @@
     clients.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
   )
   const selected = $derived(clients.find((c) => c.id === selectedId) ?? null)
+  const restoreOnCloseEnabled = $derived(selected?.restoreOnClose !== false)
 
   type BoolLink = 'mods' | 'citizen' | 'gtaSettings' | 'citizenFxIni'
   type PluginsState = 'off' | 'sync' | 'junction'
@@ -200,6 +205,7 @@
       try {
         const settings = await api.getSettings()
         applyPrimaryHexToRoot(settings.themePrimaryHex ?? DEFAULT_PRIMARY_HEX)
+        snapshotClientId = settings.snapshotClientId ?? null
         ;[appVersion, resolvedGamePath] = await Promise.all([
           api.getAppVersion(),
           api.getResolvedGamePath()
@@ -304,11 +310,38 @@
     firstRunOpen = false
   }
 
-  async function refreshResolvedPath(): Promise<void> {
+  /** Reload settings-derived state (game path, snapshot id) + the client list. */
+  async function refreshMeta(): Promise<void> {
     try {
-      resolvedGamePath = await api.getResolvedGamePath()
+      const [path, settings] = await Promise.all([api.getResolvedGamePath(), api.getSettings()])
+      resolvedGamePath = path
+      snapshotClientId = settings.snapshotClientId ?? null
+      await refresh()
     } catch {
       // ignore
+    }
+  }
+
+  function onRestoreToggle(value: boolean): void {
+    if (!selected) return
+    if (!value) {
+      // Turning restore OFF is the dangerous direction — confirm first.
+      restoreOffConfirmOpen = true
+      return
+    }
+    api
+      .setClientRestoreOnClose(selected.id, true)
+      .then(refresh)
+      .catch((e) => (error = String(e)))
+  }
+
+  async function disableRestoreOnClose(): Promise<void> {
+    if (!selected) return
+    try {
+      await api.setClientRestoreOnClose(selected.id, false)
+      await refresh()
+    } catch (e) {
+      error = String(e)
     }
   }
 </script>
@@ -371,7 +404,17 @@
                 <Icon svg={clientIconSvg(client.icon)} size={18} />
               </span>
               <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm font-semibold">{client.name}</span>
+                <span class="flex items-center gap-1.5">
+                  <span class="truncate text-sm font-semibold">{client.name}</span>
+                  {#if client.id === snapshotClientId}
+                    <span
+                      class="shrink-0 rounded-full bg-accent-wash px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-primary"
+                      use:tooltip={'Your snapshot — the baseline FiveM returns to after every session'}
+                    >
+                      snapshot
+                    </span>
+                  {/if}
+                </span>
                 <span class="block truncate text-xs text-muted-foreground">
                   {formatLastPlayed(client.lastPlayed)}
                 </span>
@@ -570,6 +613,41 @@
             </div>
           {/if}
 
+          <!-- Restore on close -->
+          <div
+            class="mt-4 flex items-center gap-3 rounded-lg px-3 py-2.5 {restoreOnCloseEnabled ||
+            !snapshotClientId
+              ? 'bg-surface-2/50'
+              : 'border border-destructive/40 bg-destructive/10'}"
+          >
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <p class="text-sm font-medium">Restore my setup on close</p>
+                <span
+                  class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+                  use:tooltip={'When the game closes, everything this client swapped in (mods, plugins, citizen, GTA settings, CitizenFX.ini) goes back to your snapshot ("My Setup").'}
+                >
+                  <Icon name="info" size={12} />
+                </span>
+              </div>
+              <p class="text-xs {!snapshotClientId || restoreOnCloseEnabled ? 'text-muted-foreground' : 'text-destructive'}">
+                {#if !snapshotClientId}
+                  No snapshot yet — create one in global settings to enable this.
+                {:else if restoreOnCloseEnabled}
+                  After you close the game, FiveM goes back to your snapshot.
+                {:else}
+                  Off: this client's files stay in FiveM after the game closes.
+                {/if}
+              </p>
+            </div>
+            <Switch
+              label="Restore my setup on close"
+              checked={snapshotClientId ? restoreOnCloseEnabled : false}
+              disabled={!snapshotClientId}
+              onchange={onRestoreToggle}
+            />
+          </div>
+
           <!-- Linking -->
           <div class="mt-6">
             <div class="mb-2 flex items-baseline gap-2">
@@ -746,8 +824,12 @@
     </div>
   </footer>
 
-  <SettingsDialog bind:open={settingsOpen} onSaved={refreshResolvedPath} />
-  <FirstRunDialog bind:open={firstRunOpen} onContinue={acknowledgeFirstRun} />
+  <SettingsDialog bind:open={settingsOpen} onSaved={refreshMeta} />
+  <FirstRunDialog
+    bind:open={firstRunOpen}
+    onContinue={acknowledgeFirstRun}
+    onSnapshotCreated={() => void refreshMeta()}
+  />
   <ClientDetailsDialog bind:open={detailsOpen} client={selected} {stats} onChanged={refresh} />
   <GtaSettingsDialog bind:open={gtaSettingsOpen} clientId={selectedId} />
   <HistoryDialog bind:open={historyOpen} />
@@ -757,8 +839,19 @@
   <ConfirmDialog
     bind:open={deleteConfirmOpen}
     title="Delete client?"
-    message={`This permanently removes "${selected?.name ?? ''}" and its linked files. This cannot be undone.`}
+    message={`This permanently removes "${selected?.name ?? ''}" and its linked files. This cannot be undone.${
+      selected?.id === snapshotClientId
+        ? ' Warning: this is your SNAPSHOT client — deleting it disables restore-on-close for every client until you create a new snapshot in settings.'
+        : ''
+    }`}
     confirmLabel="Delete client"
     onConfirm={deleteSelected}
+  />
+  <ConfirmDialog
+    bind:open={restoreOffConfirmOpen}
+    title="Turn off restore on close?"
+    message={`Dangerous: with restore off, everything "${selected?.name ?? ''}" swaps in stays in FiveM after you close the game — its mods, plugins, and settings won't go back to your snapshot until another client launches or you restore manually from settings. Playing FiveM outside FiveLaunch will use this client's files.`}
+    confirmLabel="Turn off restore"
+    onConfirm={disableRestoreOnClose}
   />
 </div>

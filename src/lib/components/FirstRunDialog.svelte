@@ -7,18 +7,42 @@
 
   let {
     open = $bindable(false),
-    onContinue
+    onContinue,
+    onSnapshotCreated
   }: {
     open?: boolean
     onContinue: () => void
+    /** Called after the snapshot client is created so the app can refresh. */
+    onSnapshotCreated?: () => void
   } = $props()
 
   let backedUp = $state(false)
+  let creatingSnapshot = $state(false)
+  let snapshotError = $state<string | null>(null)
 
   // Require the backup confirmation again each time the dialog is shown.
   $effect(() => {
-    if (open) backedUp = false
+    if (open) {
+      backedUp = false
+      creatingSnapshot = false
+      snapshotError = null
+    }
   })
+
+  async function snapshotAndContinue(): Promise<void> {
+    if (creatingSnapshot) return
+    creatingSnapshot = true
+    snapshotError = null
+    try {
+      await api.createSnapshotClient()
+      onSnapshotCreated?.()
+      onContinue()
+    } catch (e) {
+      snapshotError = String(e)
+    } finally {
+      creatingSnapshot = false
+    }
+  }
 </script>
 
 <Modal
@@ -85,6 +109,17 @@
       </div>
     </div>
 
+    <!-- Snapshot -->
+    <div class="rounded-lg bg-surface-2/60 p-4">
+      <div class="font-medium">Your setup becomes a client</div>
+      <p class="mt-1 text-muted-foreground">
+        FiveLaunch snapshots your current FiveM files into a client called
+        <span class="font-medium text-foreground">My Setup</span>. After every session, whatever a
+        client swapped in goes back to this snapshot — so closing the game always returns FiveM to
+        the setup you have right now.
+      </p>
+    </div>
+
     <!-- Required confirmation -->
     <div class="rounded-lg border border-primary/30 bg-accent-wash p-4">
       <Checkbox bind:checked={backedUp}>
@@ -92,11 +127,29 @@
         FiveLaunch's managed backups).
       </Checkbox>
     </div>
+
+    {#if snapshotError}
+      <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+        Snapshot failed: {snapshotError}
+        <p class="mt-1 text-xs text-muted-foreground">
+          You can continue and create the snapshot later from Settings.
+        </p>
+      </div>
+    {/if}
   </div>
 
   {#snippet footer()}
-    <Button variant="primary" icon="check" disabled={!backedUp} onclick={onContinue}>
-      I understand
+    <Button variant="ghost" disabled={!backedUp || creatingSnapshot} onclick={onContinue}>
+      Skip snapshot
+    </Button>
+    <Button
+      variant="primary"
+      icon="check"
+      disabled={!backedUp}
+      loading={creatingSnapshot}
+      onclick={snapshotAndContinue}
+    >
+      Snapshot my setup & continue
     </Button>
   {/snippet}
 </Modal>

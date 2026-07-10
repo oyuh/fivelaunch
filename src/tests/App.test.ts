@@ -125,6 +125,21 @@ function setupFakeBackend(): void {
         return null
       case 'create_client_shortcut':
         return 'C:\\Users\\test\\Desktop\\FiveM - Main RP.lnk'
+      case 'get_selected_client_id':
+        return null
+      case 'create_snapshot_client': {
+        const created = makeClient('id-snapshot', 'My Setup')
+        created.icon = 'shield'
+        clients = [...clients, created]
+        return created
+      }
+      case 'set_client_restore_on_close':
+        clients = clients.map((c) =>
+          c.id === args.id ? { ...c, restoreOnClose: Boolean(args.enabled) } : c
+        )
+        return null
+      case 'restore_snapshot_now':
+        return null
       case 'list_backups':
         return backups
       case 'delete_backup':
@@ -264,16 +279,19 @@ describe('App shell', () => {
 
     expect(await screen.findByText('Welcome to FiveLaunch')).toBeInTheDocument()
 
-    // Continue is disabled until the user confirms they've backed up.
-    const continueBtn = screen.getByRole('button', { name: 'I understand' })
-    expect(continueBtn).toBeDisabled()
+    // Both paths are disabled until the user confirms they've backed up.
+    const snapshotBtn = screen.getByRole('button', { name: 'Snapshot my setup & continue' })
+    const skipBtn = screen.getByRole('button', { name: 'Skip snapshot' })
+    expect(snapshotBtn).toBeDisabled()
+    expect(skipBtn).toBeDisabled()
 
     await fireEvent.click(screen.getByRole('checkbox'))
-    await fireEvent.click(continueBtn)
+    await fireEvent.click(snapshotBtn)
 
     await waitFor(() => {
       expect(screen.queryByText('Welcome to FiveLaunch')).not.toBeInTheDocument()
     })
+    expect(called('create_snapshot_client').length).toBe(1)
     expect(localStorage.getItem('fivelaunch.firstRunAck')).toBe('true')
   })
 

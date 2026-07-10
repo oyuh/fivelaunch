@@ -288,12 +288,20 @@ pub fn run_plugins_runtime_sync(
 pub struct RuntimeSyncHandle {
     pub stop: Arc<AtomicBool>,
     pub finalizing: Arc<AtomicBool>,
+    pub finished: Arc<AtomicBool>,
     pub thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl RuntimeSyncHandle {
     pub fn is_finalizing(&self) -> bool {
         self.finalizing.load(Ordering::SeqCst)
+    }
+
+    /// Shared flag that flips true once the sync loop (including its
+    /// finalization pass) has fully completed. Lets the restore-on-close
+    /// watcher wait for it without locking the runtime that owns this handle.
+    pub fn finished_flag(&self) -> Arc<AtomicBool> {
+        self.finished.clone()
     }
 
     /// Signal stop and wait for the thread to end (finalization, if running,
@@ -315,10 +323,12 @@ pub fn spawn_runtime_sync(
 ) -> RuntimeSyncHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let finalizing = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
 
     let thread = {
         let stop = stop.clone();
         let finalizing = finalizing.clone();
+        let finished = finished.clone();
         std::thread::spawn(move || {
             run_plugins_runtime_sync(
                 &game_plugins_dir,
@@ -329,12 +339,14 @@ pub fn spawn_runtime_sync(
                 &finalizing,
                 status.as_ref(),
             );
+            finished.store(true, Ordering::SeqCst);
         })
     };
 
     RuntimeSyncHandle {
         stop,
         finalizing,
+        finished,
         thread: Some(thread),
     }
 }

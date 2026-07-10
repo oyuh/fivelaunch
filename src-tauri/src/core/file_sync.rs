@@ -17,20 +17,34 @@ use super::mirror::{copy_file_best_effort, ensure_file_exists, sync_file_prefer_
 /// Handle for a generic background task (enforcement, file-sync loops).
 pub struct BackgroundTask {
     pub stop: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl BackgroundTask {
     pub fn spawn(f: impl FnOnce(Arc<AtomicBool>) + Send + 'static) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
         let thread = {
             let stop = stop.clone();
-            std::thread::spawn(move || f(stop))
+            let finished = finished.clone();
+            std::thread::spawn(move || {
+                f(stop);
+                finished.store(true, Ordering::SeqCst);
+            })
         };
         Self {
             stop,
+            finished,
             thread: Some(thread),
         }
+    }
+
+    /// Shared flag that flips true when the task's work has completed.
+    /// Lets observers (the restore-on-close watcher) wait for completion
+    /// without holding a lock on the runtime that owns this task.
+    pub fn finished_flag(&self) -> Arc<AtomicBool> {
+        self.finished.clone()
     }
 
     pub fn stop_and_join(&mut self) {
