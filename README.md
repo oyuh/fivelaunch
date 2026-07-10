@@ -1,6 +1,6 @@
 # FiveLaunch
 
-FiveLaunch is a desktop launcher for **FiveM** that manages multiple isolated client profiles by controlling how FiveM reads mods/plugins/settings on disk.
+FiveLaunch is a desktop launcher for [FiveM](https://fivem.net) that lets you keep multiple, fully isolated client setups on one machine. Each setup ("client") has its own mods, plugins, citizen overrides, and settings, and FiveLaunch swaps them in and out by controlling what FiveM actually reads on disk at launch time.
 
 [![Release](https://github.com/oyuh/fivelaunch/actions/workflows/release.yml/badge.svg)](https://github.com/oyuh/fivelaunch/actions/workflows/release.yml)
 
@@ -11,72 +11,87 @@ FiveLaunch is a desktop launcher for **FiveM** that manages multiple isolated cl
 ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4-38BDF8?logo=tailwindcss&logoColor=white)
 ![Bun](https://img.shields.io/badge/Bun-1.x-FBF0DF?logo=bun&logoColor=black)
 
-Stack: **Tauri 2 (Rust) + Svelte 5 + TypeScript + Tailwind + Bun**.
+**Stack:** Tauri 2 (Rust) + Svelte 5 + TypeScript + Tailwind + Bun
 
-Docs: https://fivelaunch.help
-Support: https://fivelaunch.help/support
-Releases: https://github.com/oyuh/fivelaunch/releases
+| | |
+|---|---|
+| Docs | https://fivelaunch.help |
+| Support | https://fivelaunch.help/support |
+| Downloads | https://github.com/oyuh/fivelaunch/releases |
+| Issues | https://github.com/oyuh/fivelaunch/issues |
 
-> v2 is a ground-up rewrite of the original Electron app (preserved on the
-> [`v1` branch](https://github.com/oyuh/fivelaunch/tree/v1)). Same behavior,
-> same on-disk data — a ~3 MB native binary instead of ~170 MB, with sub-second
-> startup.
-
----
-
-## Quickstart (Users)
-
-1) Download the latest release and run `FiveLaunch.exe`.
-2) On first run, confirm you understand what folders/files will be linked/renamed.
-3) In **Settings**, set the **FiveM.app** folder path (example: `%LOCALAPPDATA%\FiveM\FiveM.app`).
-4) Create a profile.
-5) Enable the features you want for that profile (mods/plugins/citizen/settings).
-6) Launch.
+> **v2 is a ground-up rewrite** of the original Electron app (still available on the [`v1` branch](https://github.com/oyuh/fivelaunch/tree/v1)). Behavior and on-disk data are the same, but the binary is roughly 3 MB native instead of ~170 MB, and startup is sub-second. You can move between v1 and v2 without touching your data.
 
 ---
 
-## Capabilities
+## How it works
 
-- **Multiple client profiles** with per-client linking preferences.
-- **Selective linking** for:
-  - `mods`
-  - `plugins` (junction or copy/sync mode)
-  - `citizen`
-  - `gta5_settings.xml`
-  - `CitizenFX.ini`
-- **Automatic backups** on first link (originals renamed with `_original`).
-- **Quick launch** from the UI with live progress, or from **desktop
-  shortcuts** (`FiveLaunch.exe --launch-client=<id>`, single-instance safe).
-- **GTA V settings editor** with categorized, human-friendly controls.
-- **Minimize to tray** during play with automatic restore when the game exits.
-- **Update notifications** from GitHub releases (notify-only).
-- **Open client folder** directly from the app.
-- **Custom window controls** (minimize/maximize/close).
+FiveM reads mods, plugins, and settings from a fixed set of folders and files on your machine. Instead of copying those around every time you want a different setup, FiveLaunch stores each client's files in its own directory and then, at launch, points FiveM's real paths at the client you picked.
+
+The linking is done with **NTFS junctions** wherever possible, so switching clients is effectively instant and costs no extra disk space (no duplicate copies of your mods folder). Anything FiveLaunch has to move out of the way first (an existing real folder, a settings file) goes into a **central backup store** you can browse and restore from later, rather than being left as loose `_original` files scattered next to your game.
+
+Plugins are a special case because the running game sometimes writes back into that folder. You get two modes per client:
+
+- **Junction mode** (default): the game's `plugins` folder becomes a link to the client. Instant, zero-copy.
+- **Sync mode**: `plugins` stays a real folder owned by one client. FiveLaunch mirrors client to game before launch, does a conservative game to client sync of safe file types while you play, then a final pass on exit. Use this if a plugin misbehaves when its folder is a junction.
+
+If you want a full walkthrough with screenshots, the [docs site](https://fivelaunch.help) is the place to go.
+
+---
+
+## Quickstart
+
+1. Grab the latest [release](https://github.com/oyuh/fivelaunch/releases) and run the installer.
+2. On first run, confirm you understand which folders and files FiveLaunch will link and move aside.
+3. In **Settings**, set your **FiveM.app** folder (for example `%LOCALAPPDATA%\FiveM\FiveM.app`).
+4. Create a client.
+5. Toggle on the features you want for that client: mods, plugins, citizen, settings.
+6. Launch.
+
+From then on, switching setups is: pick a client, hit launch.
+
+---
+
+## Features
+
+- **Multiple isolated clients**, each with its own linking preferences.
+- **Selective linking** per client for `mods`, `plugins` (junction or sync mode), `citizen`, `gta5_settings.xml`, and `CitizenFX.ini`. Turn on only what you want that client to control.
+- **Snapshot / "My Setup"** captures your current live FiveM files into a fresh client without duplicating them (real folders are moved in, the live location becomes a junction). Restore returns FiveM to that baseline after any session.
+- **Central backup store**: anything moved aside lands in `%APPDATA%\FiveLaunch\backups\`, browsable and restorable from the History dialog.
+- **ReShade sync**: discovers your ReShade config, presets, and logs, keeps client-owned copies, and syncs them for the active client.
+- **Quick launch** from the UI with live progress, or from a **desktop shortcut** (`FiveLaunch.exe --launch-client=<id>`), which is single-instance safe.
+- **GTA V settings editor** with categorized, human-readable controls instead of raw XML.
+- **Minimize to tray** while you play, with automatic restore when the game exits.
+- **In-app updates** via the Tauri updater, sourced from signed GitHub releases.
+- **Open a client's folder** straight from the app, and **custom window controls** (minimize / maximize / close).
 
 ---
 
 ## Architecture
 
-- **Rust core** ([src-tauri/src/core/](src-tauri/src/core/)): all filesystem,
-  linking, mirroring, and process logic. Framework-agnostic and unit-tested,
-  including golden-file tests that keep every on-disk format byte-compatible
-  with v1.
-- **Command layer** ([src-tauri/src/commands.rs](src-tauri/src/commands.rs)):
-  thin `#[tauri::command]` wrappers + background sync state.
-- **UI** ([src/](src/)): Svelte 5, talks to Rust through the typed bridge in
-  [src/lib/api.ts](src/lib/api.ts); live launch progress via Tauri events.
+The split is deliberate: all the risky filesystem and process logic lives in Rust and is unit-tested in isolation, and the Svelte UI never touches disk directly.
 
-Key modules:
-- Launch pipeline: [src-tauri/src/core/launch.rs](src-tauri/src/core/launch.rs)
-- Junction linking + backups: [src-tauri/src/core/linking.rs](src-tauri/src/core/linking.rs)
-- Plugins sync engine: [src-tauri/src/core/plugins_sync.rs](src-tauri/src/core/plugins_sync.rs)
-- File mirroring: [src-tauri/src/core/mirror.rs](src-tauri/src/core/mirror.rs)
+- **Rust core** ([`src-tauri/src/core/`](src-tauri/src/core/)): every bit of filesystem, linking, mirroring, and process logic. Framework-agnostic and unit-tested, including golden-file tests that keep every on-disk format byte-compatible with v1.
+- **Command layer** ([`src-tauri/src/commands.rs`](src-tauri/src/commands.rs)): thin `#[tauri::command]` wrappers over the core, plus background sync state.
+- **UI** ([`src/`](src/)): Svelte 5, talking to Rust through the typed bridge in [`src/lib/api.ts`](src/lib/api.ts). Live launch progress arrives over Tauri events.
+
+Modules worth knowing:
+
+| Module | Responsibility |
+|---|---|
+| [`core/launch.rs`](src-tauri/src/core/launch.rs) | The launch pipeline: link everything, kick off syncs, start the game |
+| [`core/linking.rs`](src-tauri/src/core/linking.rs) | Junction linking and moving originals into the backup store |
+| [`core/plugins_sync.rs`](src-tauri/src/core/plugins_sync.rs) | Copy/sync plugins mode with an mtime cache and in-game syncing |
+| [`core/mirror.rs`](src-tauri/src/core/mirror.rs) | The general file-mirroring engine (skew windows, content-compare tiebreaks) |
+| [`core/snapshot.rs`](src-tauri/src/core/snapshot.rs) | Capture and restore of the "My Setup" baseline client |
+| [`core/reshade.rs`](src-tauri/src/core/reshade.rs) | ReShade config/preset/log discovery and sync planning |
+| [`core/backups.rs`](src-tauri/src/core/backups.rs) | Central backup store used by the History dialog |
 
 ---
 
 ## Data model (on disk)
 
-Per-profile storage is under:
+Each client is stored under:
 
 ```
 %APPDATA%\FiveLaunch\clients\<clientId>\
@@ -88,7 +103,7 @@ Per-profile storage is under:
     CitizenFX.ini
 ```
 
-FiveM targets affected by linking:
+At launch, FiveLaunch links or writes these FiveM targets to match the active client:
 
 - `%LOCALAPPDATA%\FiveM\FiveM.app\mods`
 - `%LOCALAPPDATA%\FiveM\FiveM.app\plugins`
@@ -96,66 +111,83 @@ FiveM targets affected by linking:
 - `%APPDATA%\CitizenFX\gta5_settings.xml`
 - `%APPDATA%\CitizenFX\CitizenFX.ini`
 
-Backups created automatically on first link by renaming originals with `_original`.
-Data is fully compatible with v1 — you can switch between versions freely.
+Anything that has to be moved aside goes to the central backup store:
+
+```
+%APPDATA%\FiveLaunch\backups\<kind>_<epochMs>\
+```
+
+The on-disk format is fully compatible with v1, so you can switch between the two versions freely.
 
 ---
 
 ## Development
 
 ### Prerequisites
+
 - **Bun 1.x**
 - **Rust (stable)** with the MSVC toolchain
 
-### Run (Dev)
+### Run in dev
+
 ```powershell
 bun install
 bun run tauri dev
 ```
 
-### Tests
+There is also a no-build UI preview harness for working on the frontend in isolation:
+
 ```powershell
-bun run test                  # frontend unit + UI component tests (vitest)
-bun run check                 # svelte-check + tsc
-cargo test   # from src-tauri/ — Rust unit + v1-compatibility tests
-cargo bench  # from src-tauri/ — criterion performance benches
+bun run ui
+```
+
+### Tests
+
+```powershell
+bun run test     # frontend unit + component tests (vitest)
+bun run check    # svelte-check + tsc
+
+# from src-tauri/
+cargo test       # Rust unit tests + v1-compatibility golden tests
+cargo bench      # criterion performance benchmarks
 ```
 
 ### Build (Windows)
+
 ```powershell
 bun run tauri build
 ```
 
-Outputs:
-- Portable exe: `src-tauri/target/release/FiveLaunch.exe`
-- NSIS installer: `src-tauri/target/release/bundle/nsis/`
+The release target is a signed **NSIS installer**, produced under `src-tauri/target/release/bundle/nsis/`. The raw `FiveLaunch.exe` at `src-tauri/target/release/` is a build byproduct and is not the distributed artifact.
+
+---
+
+## Documentation
+
+Full user and reference docs live at **[fivelaunch.help](https://fivelaunch.help)**. If you get stuck or hit a bug, start at [Support](https://fivelaunch.help/support), then open an [issue](https://github.com/oyuh/fivelaunch/issues).
 
 ---
 
 ## Contributing
 
-Pull requests are welcome.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up, what the review bar is, and the licensing terms that apply to submissions.
 
-By contributing, you agree that your contribution can be incorporated into FiveLaunch and redistributed by the owner under any terms.
-See the license for details.
-
-Open issues here:
-- https://github.com/oyuh/fivelaunch/issues
+The short version: this project is source-available (not open-source), and by contributing you agree your changes can be redistributed as part of FiveLaunch. Details are in the license.
 
 ---
 
 ## License
 
-This repository is **source-available** under the **FiveLaunch Source-Available License (FiveLaunch-SAL)**.
+Source-available under the **FiveLaunch Source-Available License (FiveLaunch-SAL)**.
 
-- You may **view, use, and modify** the code for personal/internal use.
-- You may **not redistribute** the code or derivatives (including public forks) without written permission.
-- You can share improvements by submitting a **pull request** back to this repository.
+- You **may** view, use, and modify the code for personal or internal use.
+- You **may not** redistribute the code or derivatives (including public forks) without written permission.
+- You **can** share improvements by opening a pull request back to this repository.
 
-See [LICENSE](LICENSE) for the full terms.
+Full terms in [LICENSE](LICENSE).
 
 ---
 
 ## Disclaimer
 
-FiveLaunch modifies FiveM client files by linking/replacing folders and settings. Use at your own risk. Always keep backups.
+FiveLaunch modifies FiveM client files by linking and replacing folders and settings. Use at your own risk, and keep your own backups of anything you care about.
