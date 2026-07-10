@@ -259,6 +259,13 @@ pub fn rename_client(state: State<'_, AppState>, id: String, name: String) -> Re
     state.store()?.rename_client(&id, name)
 }
 
+/// Persist a new client ordering (drag-to-reorder in the list). Small JSON
+/// write, so it stays on the main thread like the other list mutations.
+#[tauri::command]
+pub fn reorder_clients(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
+    state.store()?.reorder_clients(&ids)
+}
+
 #[tauri::command]
 pub fn update_client_links(
     state: State<'_, AppState>,

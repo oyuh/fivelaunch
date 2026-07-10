@@ -186,6 +186,14 @@ mockIPC((cmd, payload) => {
     case 'rename_client':
       clients = clients.map((c) => (c.id === args.id ? { ...c, name: String(args.name) } : c))
       return null
+    case 'reorder_clients': {
+      const ids = (args.ids as string[]) ?? []
+      const byId = new Map(clients.map((c) => [c.id, c]))
+      const reordered = ids.map((id) => byId.get(id)).filter(Boolean) as ClientProfile[]
+      for (const c of clients) if (!ids.includes(c.id)) reordered.push(c)
+      clients = reordered
+      return null
+    }
     case 'delete_client':
       clients = clients.filter((c) => c.id !== args.id)
       if (selectedClientId === args.id) selectedClientId = null

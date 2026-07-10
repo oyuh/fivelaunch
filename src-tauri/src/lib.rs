@@ -76,6 +76,7 @@ pub fn run() {
             commands::create_snapshot_client,
             commands::restore_snapshot_now,
             commands::rename_client,
+            commands::reorder_clients,
             commands::update_client_links,
             commands::get_client_stats,
             commands::list_client_mods,

@@ -46,6 +46,8 @@ export const api = {
     invoke<ClientProfile>('create_snapshot_client', { name }),
   restoreSnapshotNow: () => invoke<void>('restore_snapshot_now'),
   renameClient: (id: string, name: string) => invoke<void>('rename_client', { id, name }),
+  /** Persist a new client ordering (drag-to-reorder in the list). */
+  reorderClients: (ids: string[]) => invoke<void>('reorder_clients', { ids }),
   updateClientLinks: (id: string, linkOptions: LinkOptions) =>
     invoke<void>('update_client_links', { id, linkOptions }),
   getClientStats: (id: string) => invoke<ClientStats>('get_client_stats', { id }),

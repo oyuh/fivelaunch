@@ -98,6 +98,57 @@
     const q = query.trim().toLowerCase()
     return q ? clients.filter((c) => c.name.toLowerCase().includes(q)) : clients
   })
+
+  // Drag-to-reorder. Only enabled with no active search — a filtered list's
+  // indices don't map to positions in the full `clients` array. When
+  // `reorderable` is true, `filtered === clients`, so row indices are canonical.
+  const reorderable = $derived(!query.trim())
+  let dragIndex = $state<number | null>(null)
+  let dropIndex = $state<number | null>(null)
+
+  function onDragStart(e: DragEvent, index: number): void {
+    dragIndex = index
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      // Some engines require data to be set for a drag to begin.
+      e.dataTransfer.setData('text/plain', String(index))
+    }
+  }
+
+  function onDragOver(e: DragEvent, index: number): void {
+    if (dragIndex === null) return
+    e.preventDefault() // allow the drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    dropIndex = index
+  }
+
+  function onDrop(e: DragEvent, index: number): void {
+    e.preventDefault()
+    const from = dragIndex
+    dragIndex = null
+    dropIndex = null
+    if (from === null || from === index) return
+    void applyReorder(from, index)
+  }
+
+  function onDragEnd(): void {
+    dragIndex = null
+    dropIndex = null
+  }
+
+  /** Move a client and persist the new order (optimistic, reverts on error). */
+  async function applyReorder(from: number, to: number): Promise<void> {
+    const next = [...clients]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    clients = next
+    try {
+      await api.reorderClients(next.map((c) => c.id))
+    } catch (e) {
+      error = String(e)
+      await refresh()
+    }
+  }
   const selected = $derived(clients.find((c) => c.id === selectedId) ?? null)
   const restoreOnCloseEnabled = $derived(selected?.restoreOnClose !== false)
 
@@ -379,7 +430,15 @@
             if (!searchOpen) query = ''
           }}
         />
-        <IconButton icon="plus" label="New client" size="sm" onclick={() => (createOpen = true)} />
+        <Button
+          variant="primary"
+          size="sm"
+          icon="plus"
+          ariaLabel="New client"
+          onclick={() => (createOpen = true)}
+        >
+          New
+        </Button>
       </div>
 
       {#if searchOpen}
@@ -400,14 +459,35 @@
             {clients.length === 0 ? 'No clients yet. Click + to add one.' : 'No matches.'}
           </p>
         {:else}
-          {#each filtered as client (client.id)}
+          {#each filtered as client, i (client.id)}
             <button
-              class="mb-1 flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors {selectedId ===
+              class="group/row relative mb-1 flex w-full items-center gap-3 rounded-md py-2 pr-2 text-left transition-[padding,background-color,box-shadow,opacity] {reorderable
+                ? 'pl-2 hover:pl-7'
+                : 'pl-2'} {selectedId ===
               client.id
                 ? 'bg-accent-wash ring-1 ring-primary/40'
-                : 'hover:bg-surface-3'}"
+                : 'hover:bg-surface-3'} {dragIndex === i ? 'opacity-40' : ''} {dropIndex === i &&
+              dragIndex !== null &&
+              dragIndex !== i
+                ? 'ring-1 ring-primary/60'
+                : ''}"
+              draggable={reorderable}
               onclick={() => (selectedId = client.id)}
+              ondragstart={(e) => onDragStart(e, i)}
+              ondragover={(e) => onDragOver(e, i)}
+              ondrop={(e) => onDrop(e, i)}
+              ondragend={onDragEnd}
             >
+              {#if reorderable}
+                <!-- Grip is an absolute overlay so it never reserves space:
+                     rows sit flush until hover slides them right to reveal it. -->
+                <span
+                  class="pointer-events-none absolute inset-y-0 left-1 flex items-center text-muted-foreground/40 opacity-0 transition-opacity group-hover/row:opacity-100"
+                  aria-hidden="true"
+                >
+                  <Icon name="gripVertical" size={14} />
+                </span>
+              {/if}
               <span
                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md {selectedId ===
                 client.id

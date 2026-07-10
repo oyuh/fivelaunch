@@ -331,6 +331,24 @@ impl ClientStore {
         self.save_config(&config).map_err(|e| e.to_string())
     }
 
+    /// Reorder the client list to match `ordered_ids`. Ids are applied in the
+    /// given order; any client the caller omitted keeps its original relative
+    /// position at the end (so a stale UI list can't drop clients). Unknown
+    /// ids are ignored.
+    pub fn reorder_clients(&self, ordered_ids: &[String]) -> Result<(), String> {
+        let mut config = self.get_config();
+        let mut remaining = config.clients;
+        let mut reordered: Vec<ClientProfile> = Vec::with_capacity(remaining.len());
+        for id in ordered_ids {
+            if let Some(pos) = remaining.iter().position(|c| &c.id == id) {
+                reordered.push(remaining.remove(pos));
+            }
+        }
+        reordered.append(&mut remaining);
+        config.clients = reordered;
+        self.save_config(&config).map_err(|e| e.to_string())
+    }
+
     pub fn update_link_options(&self, id: &str, link_options: LinkOptions) -> Result<(), String> {
         let mut config = self.get_config();
         let Some(client) = config.clients.iter_mut().find(|c| c.id == id) else {
@@ -574,6 +592,31 @@ mod tests {
         // Unknown id is a tolerated no-op that keeps the prior selection.
         store.mark_launched("nope").unwrap();
         assert_eq!(store.get_selected_client_id().as_deref(), Some(b.id.as_str()));
+    }
+
+    #[test]
+    fn reorder_applies_new_order_and_keeps_omitted_clients() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+        let a = store.create_client("A".into(), None).unwrap();
+        let b = store.create_client("B".into(), None).unwrap();
+        let c = store.create_client("C".into(), None).unwrap();
+
+        // Move C to the front, B to the back; A left unmentioned.
+        store
+            .reorder_clients(&[c.id.clone(), a.id.clone()])
+            .unwrap();
+
+        let ids: Vec<String> = store.get_clients().into_iter().map(|x| x.id).collect();
+        // Mentioned ids come first in given order; the rest keep prior order.
+        assert_eq!(ids, vec![c.id.clone(), a.id.clone(), b.id.clone()]);
+
+        // An unknown id is ignored and no clients are dropped.
+        store
+            .reorder_clients(&[b.id.clone(), "ghost".into(), a.id.clone()])
+            .unwrap();
+        let ids: Vec<String> = store.get_clients().into_iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![b.id, a.id, c.id]);
     }
 
     #[test]
