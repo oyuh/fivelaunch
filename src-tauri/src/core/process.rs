@@ -1,6 +1,42 @@
 use std::io;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+
+const GAME_PROCESS_NAMES: &[&str] = &["FiveM.exe", "GTA5.exe"];
+
+/// Several watcher loops (tray restore, restore-on-close, file sync) poll the
+/// game state concurrently at ~1s. They share one `System` (sysinfo reuses
+/// its buffers across refreshes) and one result inside this TTL, so a burst
+/// of callers costs a single process-table scan. The TTL is well under every
+/// caller's poll interval, so observable behavior is unchanged.
+const GAME_CHECK_TTL: Duration = Duration::from_millis(250);
+
+struct GameCheck {
+    sys: System,
+    last: Option<(Instant, bool)>,
+}
+
+fn game_check() -> &'static Mutex<GameCheck> {
+    static CELL: OnceLock<Mutex<GameCheck>> = OnceLock::new();
+    CELL.get_or_init(|| {
+        Mutex::new(GameCheck {
+            sys: System::new(),
+            last: None,
+        })
+    })
+}
+
+fn scan_for_names(sys: &mut System, names: &[&str]) -> bool {
+    // Names only — skip the per-process CPU/memory/disk stats the default
+    // refresh collects; this runs in a poll loop while the game is up.
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    sys.processes().values().any(|p| {
+        let name = p.name();
+        names.iter().any(|n| name.eq_ignore_ascii_case(n.trim()))
+    })
+}
 
 /// True if any process with one of the given image names is running.
 ///
@@ -8,24 +44,24 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 /// the game ran) with native process enumeration — this is one of the
 /// headline perf wins of the rewrite.
 pub fn any_process_running(names: &[&str]) -> bool {
-    let lowered: Vec<String> = names.iter().map(|n| n.trim().to_lowercase()).collect();
-    if lowered.is_empty() {
+    if names.is_empty() {
         return false;
     }
-
-    // Names only — skip the per-process CPU/memory/disk stats the default
-    // refresh collects; this runs in a poll loop while the game is up.
     let mut sys = System::new();
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-
-    sys.processes().values().any(|p| {
-        let name = p.name().to_string_lossy().to_lowercase();
-        lowered.contains(&name)
-    })
+    scan_for_names(&mut sys, names)
 }
 
 pub fn is_game_running() -> bool {
-    any_process_running(&["FiveM.exe", "GTA5.exe"])
+    let mut guard = game_check().lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((at, result)) = guard.last {
+        if at.elapsed() < GAME_CHECK_TTL {
+            return result;
+        }
+    }
+    let sys = &mut guard.sys;
+    let running = scan_for_names(sys, GAME_PROCESS_NAMES);
+    guard.last = Some((Instant::now(), running));
+    running
 }
 
 /// Launch an executable fully detached from the launcher (no retained

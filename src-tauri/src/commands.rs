@@ -80,6 +80,19 @@ impl AppState {
     }
 }
 
+/// Run blocking filesystem work off the main thread. Non-async commands
+/// execute on the main thread in Tauri, so anything that walks, copies, or
+/// deletes folders must go through here or the whole UI freezes with it.
+async fn blocking<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn open_in_explorer(path: std::path::PathBuf) -> Result<(), String> {
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
@@ -100,22 +113,25 @@ pub fn get_selected_client_id(state: State<'_, AppState>) -> Result<Option<Strin
 }
 
 #[tauri::command]
-pub fn create_client(
+pub async fn create_client(
     state: State<'_, AppState>,
     name: String,
     icon: Option<String>,
 ) -> Result<ClientProfile, String> {
-    state.store()?.create_client(name, icon)
+    let paths = state.paths.clone();
+    blocking(move || ClientStore::new(&paths)?.create_client(name, icon)).await
 }
 
+/// Can copy multi-GB mod folders — must stay off the main thread.
 #[tauri::command]
-pub fn duplicate_client(
+pub async fn duplicate_client(
     state: State<'_, AppState>,
     id: String,
     name: String,
     options: DuplicateOptions,
 ) -> Result<ClientProfile, String> {
-    state.store()?.duplicate_client(&id, name, options)
+    let paths = state.paths.clone();
+    blocking(move || ClientStore::new(&paths)?.duplicate_client(&id, name, options)).await
 }
 
 #[tauri::command]
@@ -136,16 +152,21 @@ pub fn set_client_pure_mode(
     state.store()?.set_pure_mode(&id, pure_mode)
 }
 
+/// Recursively deletes the client's folder — must stay off the main thread.
 #[tauri::command]
-pub fn delete_client(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    state.store()?.delete_client(&id)?;
-    // Deleting the snapshot client turns restore-on-close off app-wide;
-    // drop the dangling reference so the UI offers to create a new one.
-    let settings_file = state.paths.settings_file();
-    if settings::load(&settings_file).snapshot_client_id.as_deref() == Some(id.as_str()) {
-        settings::set_snapshot_client_id(&settings_file, None)?;
-    }
-    Ok(())
+pub async fn delete_client(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let paths = state.paths.clone();
+    blocking(move || {
+        ClientStore::new(&paths)?.delete_client(&id)?;
+        // Deleting the snapshot client turns restore-on-close off app-wide;
+        // drop the dangling reference so the UI offers to create a new one.
+        let settings_file = paths.settings_file();
+        if settings::load(&settings_file).snapshot_client_id.as_deref() == Some(id.as_str()) {
+            settings::set_snapshot_client_id(&settings_file, None)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -247,43 +268,57 @@ pub fn update_client_links(
     state.store()?.update_link_options(&id, link_options)
 }
 
+/// Walks the whole client folder — must stay off the main thread.
 #[tauri::command]
-pub fn get_client_stats(state: State<'_, AppState>, id: String) -> Result<ClientStats, String> {
-    Ok(state.store()?.client_stats(&id))
+pub async fn get_client_stats(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ClientStats, String> {
+    let paths = state.paths.clone();
+    blocking(move || Ok(ClientStore::new(&paths)?.client_stats(&id))).await
 }
 
 #[tauri::command]
-pub fn list_client_mods(state: State<'_, AppState>, id: String) -> Result<Vec<String>, String> {
-    let folder = state
-        .store()?
-        .client_folder_path(&id)
-        .ok_or("Client folder not found.")?;
-    let mods_path = folder.join("mods");
-    if !mods_path.exists() {
-        return Ok(Vec::new());
-    }
+pub async fn list_client_mods(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<String>, String> {
+    let paths = state.paths.clone();
+    blocking(move || {
+        let folder = ClientStore::new(&paths)?
+            .client_folder_path(&id)
+            .ok_or("Client folder not found.")?;
+        let mods_path = folder.join("mods");
+        if !mods_path.exists() {
+            return Ok(Vec::new());
+        }
 
-    let mut entries: Vec<String> = std::fs::read_dir(&mods_path)
-        .map_err(|e| e.to_string())?
-        .flatten()
-        .map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                format!("{name}/")
-            } else {
-                name
-            }
-        })
-        .collect();
-    entries.sort_by_key(|a| a.to_lowercase());
-    Ok(entries)
+        let mut entries: Vec<String> = std::fs::read_dir(&mods_path)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    format!("{name}/")
+                } else {
+                    name
+                }
+            })
+            .collect();
+        entries.sort_by_key(|a| a.to_lowercase());
+        Ok(entries)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
 // Folders
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+// Explorer opens are quick but can stall on slow disks; `(async)` runs them
+// on the async runtime instead of the main thread.
+
+#[tauri::command(async)]
 pub fn open_client_folder(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let folder = state
         .store()?
@@ -292,7 +327,7 @@ pub fn open_client_folder(state: State<'_, AppState>, id: String) -> Result<(), 
     open_in_explorer(folder)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_client_plugins_folder(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let folder = state
         .store()?
@@ -301,20 +336,20 @@ pub fn open_client_plugins_folder(state: State<'_, AppState>, id: String) -> Res
     open_in_explorer(folder.join("plugins"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_citizenfx_folder() -> Result<(), String> {
     let dir = paths::citizen_fx_dir().ok_or("CitizenFX folder not found.")?;
     open_in_explorer(dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_fivem_folder(state: State<'_, AppState>) -> Result<(), String> {
     let dir = paths::five_m_path(state.game_path_override().as_deref())
         .ok_or("FiveM folder not found.")?;
     open_in_explorer(dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_fivem_plugins_folder(state: State<'_, AppState>) -> Result<(), String> {
     let dir = paths::five_m_path(state.game_path_override().as_deref())
         .ok_or("FiveM folder not found.")?;
@@ -361,20 +396,26 @@ pub fn get_resolved_game_path(state: State<'_, AppState>) -> Option<String> {
 pub async fn browse_game_path(app: tauri::AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let picked = app
-        .dialog()
-        .file()
-        .set_title("Select FiveM.app folder")
-        .blocking_pick_folder();
+    // The dialog blocks until dismissed — keep that wait on a blocking
+    // thread, not an async runtime worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title("Select FiveM.app folder")
+            .blocking_pick_folder();
 
-    match picked {
-        Some(tauri_plugin_dialog::FilePath::Path(p)) => Some(p.to_string_lossy().to_string()),
-        Some(tauri_plugin_dialog::FilePath::Url(u)) => u
-            .to_file_path()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string()),
-        None => None,
-    }
+        match picked {
+            Some(tauri_plugin_dialog::FilePath::Path(p)) => Some(p.to_string_lossy().to_string()),
+            Some(tauri_plugin_dialog::FilePath::Url(u)) => u
+                .to_file_path()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string()),
+            None => None,
+        }
+    })
+    .await
+    .unwrap_or(None)
 }
 
 #[tauri::command]
@@ -384,36 +425,46 @@ pub fn get_app_version(app: tauri::AppHandle) -> String {
 
 /// `%APPDATA%\FiveLaunch` — where clients.json and every client folder live.
 /// Exposed so users can copy their clients out before uninstalling.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_app_data_folder(state: State<'_, AppState>) -> Result<(), String> {
     open_in_explorer(state.paths.app_data.clone())
 }
 
 /// Full uninstall: wipe `%APPDATA%\FiveLaunch` (clients, settings, backups),
 /// hand off to the NSIS uninstaller that lives next to the exe, and quit.
+/// The wipe can remove GBs of client data — keep it off the main thread so
+/// the window stays alive while it runs.
 #[tauri::command]
-pub fn uninstall_app(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let uninstaller = exe
-        .parent()
-        .map(|dir| dir.join("uninstall.exe"))
-        .filter(|p| p.exists())
-        .ok_or("Uninstaller not found next to the app — is this a development build?")?;
+pub async fn uninstall_app(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let runtime = state.runtime.clone();
+    let app_data = state.paths.app_data.clone();
+    blocking(move || {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let uninstaller = exe
+            .parent()
+            .map(|dir| dir.join("uninstall.exe"))
+            .filter(|p| p.exists())
+            .ok_or("Uninstaller not found next to the app — is this a development build?")?;
 
-    // Stop background sync/watcher work so nothing recreates files mid-wipe.
-    if let Ok(mut guard) = state.runtime.lock() {
-        guard.stop_all();
-    }
+        // Stop background sync/watcher work so nothing recreates files mid-wipe.
+        if let Ok(mut guard) = runtime.lock() {
+            guard.stop_all();
+        }
 
-    log::info!("Uninstall requested: removing app data and starting uninstaller");
-    if state.paths.app_data.exists() {
-        std::fs::remove_dir_all(&state.paths.app_data)
-            .map_err(|e| format!("Could not remove app data: {e}"))?;
-    }
+        log::info!("Uninstall requested: removing app data and starting uninstaller");
+        if app_data.exists() {
+            std::fs::remove_dir_all(&app_data)
+                .map_err(|e| format!("Could not remove app data: {e}"))?;
+        }
 
-    crate::core::process::spawn_detached(&uninstaller, &[]).map_err(|e| e.to_string())?;
-    app.exit(0);
-    Ok(())
+        crate::core::process::spawn_detached(&uninstaller, &[]).map_err(|e| e.to_string())?;
+        app.exit(0);
+        Ok(())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -792,21 +843,27 @@ fn restore_on_game_exit(
 // Backup history
 // ---------------------------------------------------------------------------
 
+/// Walks every backup folder for sizes — must stay off the main thread.
 #[tauri::command]
-pub fn list_backups(state: State<'_, AppState>) -> Vec<crate::core::backups::BackupEntry> {
-    crate::core::backups::list_backups(&crate::core::backups::backups_root(&state.paths))
+pub async fn list_backups(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::core::backups::BackupEntry>, String> {
+    let root = crate::core::backups::backups_root(&state.paths);
+    blocking(move || Ok(crate::core::backups::list_backups(&root))).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_backups_folder(state: State<'_, AppState>) -> Result<(), String> {
     let dir = crate::core::backups::backups_root(&state.paths);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open_in_explorer(dir)
 }
 
+/// Recursively deletes a backup folder — must stay off the main thread.
 #[tauri::command]
-pub fn delete_backup(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    crate::core::backups::delete_backup(&crate::core::backups::backups_root(&state.paths), &name)
+pub async fn delete_backup(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let root = crate::core::backups::backups_root(&state.paths);
+    blocking(move || crate::core::backups::delete_backup(&root, &name)).await
 }
 
 #[tauri::command]
@@ -817,7 +874,8 @@ pub async fn launch_client(app: tauri::AppHandle, id: String) -> Result<(), Stri
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+/// Process-table scan — `(async)` keeps it off the main thread.
+#[tauri::command(async)]
 pub fn is_game_running() -> bool {
     crate::core::process::is_game_running()
 }
@@ -915,7 +973,7 @@ pub fn clear_app_logs(state: State<'_, AppState>) {
     state.log_store.clear();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_client_shortcut(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let client = state.store()?.get_client(&id).ok_or("Client not found.")?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -926,7 +984,7 @@ pub fn create_client_shortcut(state: State<'_, AppState>, id: String) -> Result<
     Ok(path.to_string_lossy().to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_url(url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err("Only https URLs can be opened.".into());
@@ -938,7 +996,9 @@ pub fn open_url(url: String) -> Result<(), String> {
 // GTA settings (editor UI)
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+// XML parse/serialize + file IO — `(async)` keeps them off the main thread.
+
+#[tauri::command(async)]
 pub fn get_client_gta_settings(
     state: State<'_, AppState>,
     id: String,
@@ -949,7 +1009,7 @@ pub fn get_client_gta_settings(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_client_gta_settings(
     state: State<'_, AppState>,
     id: String,
@@ -958,7 +1018,7 @@ pub fn save_client_gta_settings(
     crate::core::gta_settings::save_client_settings(&state.paths.clients_data(), &id, &doc)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_gta_settings_from_documents(
     state: State<'_, AppState>,
     id: String,
@@ -970,7 +1030,7 @@ pub fn import_gta_settings_from_documents(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_gta_settings_from_template(
     state: State<'_, AppState>,
     id: String,

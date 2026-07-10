@@ -61,21 +61,28 @@
   let logSeq = 0
   let updateStatus = $state<UpdateStatus | null>(null)
 
+  // Appends mutate the $state array in place (deeply reactive) — re-spreading
+  // the whole history on every entry would be O(n) per log line.
   function pushLog(message: string): void {
     logSeq += 1
+    const lower = message.toLowerCase()
     const level: AppLogEntry['level'] = message.startsWith('WARNING')
       ? 'warn'
-      : message.toLowerCase().includes('error') || message.toLowerCase().includes('failed')
+      : lower.includes('error') || lower.includes('failed')
         ? 'error'
         : 'info'
-    logs = [...logs, { id: logSeq, ts: Date.now(), level, message, source: 'launch' }]
-    if (logs.length > 1000) logs = logs.slice(logs.length - 1000)
+    logs.push({ id: logSeq, ts: Date.now(), level, message, source: 'launch' })
+    if (logs.length > 1000) logs.splice(0, logs.length - 1000)
+  }
+
+  function toMainLog(entry: { id: number; ts: number; level: AppLogEntry['level']; message: string }): AppLogEntry {
+    // Main-process ids are their own sequence; offset to keep keys unique.
+    return { ...entry, id: entry.ts + entry.id, source: 'main' }
   }
 
   function pushMainLog(entry: { id: number; ts: number; level: AppLogEntry['level']; message: string }): void {
-    // Main-process ids are their own sequence; offset to keep keys unique.
-    logs = [...logs, { ...entry, id: entry.ts + entry.id, source: 'main' }]
-    if (logs.length > 1600) logs = logs.slice(logs.length - 1600)
+    logs.push(toMainLog(entry))
+    if (logs.length > 1600) logs.splice(0, logs.length - 1600)
   }
 
   async function clearLogs(): Promise<void> {
@@ -87,9 +94,10 @@
     }
   }
 
-  const filtered = $derived(
-    clients.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
-  )
+  const filtered = $derived.by(() => {
+    const q = query.trim().toLowerCase()
+    return q ? clients.filter((c) => c.name.toLowerCase().includes(q)) : clients
+  })
   const selected = $derived(clients.find((c) => c.id === selectedId) ?? null)
   const restoreOnCloseEnabled = $derived(selected?.restoreOnClose !== false)
 
@@ -151,17 +159,6 @@
     }
   }
 
-  /** Reselect the client that was launched last (persisted backend-side). */
-  async function restoreSelection(): Promise<void> {
-    if (selectedId) return
-    try {
-      const id = await api.getSelectedClientId()
-      if (id && clients.some((c) => c.id === id)) selectedId = id
-    } catch {
-      // ignore — a missing selection just leaves the empty state
-    }
-  }
-
   onMount(() => {
     firstRunOpen = localStorage.getItem(FIRST_RUN_ACK_KEY) !== 'true'
 
@@ -180,18 +177,27 @@
       .then((fn) => (unlistenAppLog = fn))
       .catch(() => {})
 
-    // Backfill main-process logs from before the UI was ready, then check
-    // for updates (notify-only, cached 15 minutes backend-side).
+    // Backfill main-process logs from before the UI was ready in one batch
+    // (per-entry pushes would re-trigger reactivity for each of up to 800
+    // ring-buffer entries), then check for updates (notify-only, cached 15
+    // minutes backend-side).
     api
       .getAppLogs()
-      .then((entries) => entries.forEach((e) => pushMainLog(e)))
+      .then((entries) => {
+        if (entries.length === 0) return
+        logs.push(...entries.map(toMainLog))
+        if (logs.length > 1600) logs.splice(0, logs.length - 1600)
+      })
       .catch(() => {})
     api
       .getUpdateStatus()
       .then((status) => (updateStatus = status))
       .catch(() => {})
 
+    // Busy state only matters when someone can see the launch button — skip
+    // ticks while hidden (minimized to tray) and catch up on re-show.
     const pollBusy = () => {
+      if (document.hidden) return
       api
         .getGameBusyState()
         .then((s) => (pluginsSyncBusy = s.pluginsSyncBusy))
@@ -199,15 +205,26 @@
     }
     pollBusy()
     const busyTimer = setInterval(pollBusy, 3000)
+    document.addEventListener('visibilitychange', pollBusy)
 
+    // Independent reads — issue them together instead of as a waterfall so
+    // the first paint with data needs one IPC round trip, not four.
     void (async () => {
       try {
-        const settings = await api.getSettings()
+        const [settings, version, clientList, storedSelection] = await Promise.all([
+          api.getSettings(),
+          api.getAppVersion(),
+          api.getClients(),
+          api.getSelectedClientId().catch(() => null)
+        ])
         applyPrimaryHexToRoot(settings.themePrimaryHex ?? DEFAULT_PRIMARY_HEX)
         snapshotClientId = settings.snapshotClientId ?? null
-        appVersion = await api.getAppVersion()
-        await refresh()
-        await restoreSelection()
+        appVersion = version
+        clients = clientList
+        // Reselect the client that was launched last (persisted backend-side).
+        if (!selectedId && storedSelection && clientList.some((c) => c.id === storedSelection)) {
+          selectedId = storedSelection
+        }
       } catch (e) {
         error = String(e)
       }
@@ -215,6 +232,7 @@
 
     return () => {
       clearInterval(busyTimer)
+      document.removeEventListener('visibilitychange', pollBusy)
       unlistenFn?.()
       unlistenAppLog?.()
     }

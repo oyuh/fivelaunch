@@ -19,6 +19,12 @@ export default defineConfig({
     entries: ['index.html', 'index.preview.html']
   },
 
+  // The app only renders in WebView2 (evergreen Chromium) — skip syntax
+  // downleveling for older browsers; smaller output, faster parse.
+  build: {
+    target: 'chrome120'
+  },
+
   // Tauri expects a fixed port; fail if unavailable instead of picking another.
   server: {
     port: 5173,
