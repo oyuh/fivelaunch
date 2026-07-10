@@ -39,7 +39,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
         // Never follow links out of the tree being backed up.

@@ -66,7 +66,9 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::get_clients,
+            commands::get_selected_client_id,
             commands::create_client,
+            commands::duplicate_client,
             commands::set_client_icon,
             commands::set_client_pure_mode,
             commands::delete_client,
@@ -102,6 +104,8 @@ pub fn run() {
             commands::list_backups,
             commands::open_backups_folder,
             commands::delete_backup,
+            commands::open_app_data_folder,
+            commands::uninstall_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

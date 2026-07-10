@@ -5,6 +5,7 @@ import type {
   BackupEntry,
   ClientProfile,
   ClientStats,
+  DuplicateOptions,
   GameBusyState,
   GtaSettingsDocument,
   LinkOptions,
@@ -26,12 +27,16 @@ interface RawAppLogEntry {
 export const api = {
   // Clients
   getClients: () => invoke<ClientProfile[]>('get_clients'),
+  /** The client most recently launched, persisted across restarts. */
+  getSelectedClientId: () => invoke<string | null>('get_selected_client_id'),
   createClient: (name: string, icon?: string) =>
     invoke<ClientProfile>('create_client', { name, icon }),
   setClientIcon: (id: string, icon: string | null) =>
     invoke<void>('set_client_icon', { id, icon }),
   setClientPureMode: (id: string, pureMode: number | null) =>
     invoke<void>('set_client_pure_mode', { id, pureMode }),
+  duplicateClient: (id: string, name: string, options: DuplicateOptions) =>
+    invoke<ClientProfile>('duplicate_client', { id, name, options }),
   deleteClient: (id: string) => invoke<void>('delete_client', { id }),
   renameClient: (id: string, name: string) => invoke<void>('rename_client', { id, name }),
   updateClientLinks: (id: string, linkOptions: LinkOptions) =>
@@ -92,5 +97,8 @@ export const api = {
     invoke<GtaSettingsDocument>('import_gta_settings_from_template', { id }),
 
   // App
-  getAppVersion: () => invoke<string>('get_app_version')
+  getAppVersion: () => invoke<string>('get_app_version'),
+  openAppDataFolder: () => invoke<void>('open_app_data_folder'),
+  /** Wipes all FiveLaunch data, launches the NSIS uninstaller, and exits. */
+  uninstallApp: () => invoke<void>('uninstall_app')
 }

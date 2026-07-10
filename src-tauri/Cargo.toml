@@ -5,6 +5,7 @@ description = "FiveLaunch - launch FiveM with select mods and settings"
 authors = ["Lawson Hart"]
 license = "SEE LICENSE IN LICENSE"
 repository = "https://github.com/oyuh/fivelaunch"
+homepage = "https://fivelaunch.help"
 edition = "2021"
 rust-version = "1.77.2"
 

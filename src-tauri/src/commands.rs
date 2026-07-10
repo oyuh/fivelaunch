@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
-use crate::core::clients::{ClientProfile, ClientStore, LinkOptions, PluginsMode};
+use crate::core::clients::{ClientProfile, ClientStore, DuplicateOptions, LinkOptions, PluginsMode};
 use crate::core::file_sync::BackgroundTask;
 use crate::core::gta_settings::GtaSettingsDocument;
 use crate::core::log_store::{AppLogEntry, LogStore};
@@ -85,6 +85,12 @@ pub fn get_clients(state: State<'_, AppState>) -> Result<Vec<ClientProfile>, Str
     Ok(state.store()?.get_clients())
 }
 
+/// The client most recently launched — used to reselect it on app start.
+#[tauri::command]
+pub fn get_selected_client_id(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state.store()?.get_selected_client_id())
+}
+
 #[tauri::command]
 pub fn create_client(
     state: State<'_, AppState>,
@@ -92,6 +98,16 @@ pub fn create_client(
     icon: Option<String>,
 ) -> Result<ClientProfile, String> {
     state.store()?.create_client(name, icon)
+}
+
+#[tauri::command]
+pub fn duplicate_client(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    options: DuplicateOptions,
+) -> Result<ClientProfile, String> {
+    state.store()?.duplicate_client(&id, name, options)
 }
 
 #[tauri::command]
@@ -266,6 +282,40 @@ pub fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// `%APPDATA%\FiveLaunch` — where clients.json and every client folder live.
+/// Exposed so users can copy their clients out before uninstalling.
+#[tauri::command]
+pub fn open_app_data_folder(state: State<'_, AppState>) -> Result<(), String> {
+    open_in_explorer(state.paths.app_data.clone())
+}
+
+/// Full uninstall: wipe `%APPDATA%\FiveLaunch` (clients, settings, backups),
+/// hand off to the NSIS uninstaller that lives next to the exe, and quit.
+#[tauri::command]
+pub fn uninstall_app(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let uninstaller = exe
+        .parent()
+        .map(|dir| dir.join("uninstall.exe"))
+        .filter(|p| p.exists())
+        .ok_or("Uninstaller not found next to the app — is this a development build?")?;
+
+    // Stop background sync/watcher work so nothing recreates files mid-wipe.
+    if let Ok(mut guard) = state.runtime.lock() {
+        guard.stop_all();
+    }
+
+    log::info!("Uninstall requested: removing app data and starting uninstaller");
+    if state.paths.app_data.exists() {
+        std::fs::remove_dir_all(&state.paths.app_data)
+            .map_err(|e| format!("Could not remove app data: {e}"))?;
+    }
+
+    crate::core::process::spawn_detached(&uninstaller, &[]).map_err(|e| e.to_string())?;
+    app.exit(0);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Launch
 // ---------------------------------------------------------------------------
@@ -357,6 +407,15 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
             return Err(err);
         }
     };
+
+    // The game spawned: record it as last played and remember the selection so
+    // the UI reselects this client on the next app start. Best-effort — a
+    // bookkeeping failure must not abort a successful launch.
+    if let Ok(store) = state.store() {
+        if let Err(err) = store.mark_launched(id) {
+            log::warn!("Could not update last-played for {id}: {err}");
+        }
+    }
 
     let mut new_runtime = LaunchRuntime::default();
 

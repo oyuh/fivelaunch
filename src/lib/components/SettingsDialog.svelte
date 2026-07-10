@@ -118,6 +118,29 @@
       saveError = String(e)
     }
   }
+
+  // Uninstall flow
+  let uninstallConfirmOpen = $state(false)
+  let uninstalling = $state(false)
+  let uninstallError = $state<string | null>(null)
+
+  function openDataFolder(): void {
+    api.openAppDataFolder().catch((e) => (uninstallError = String(e)))
+  }
+
+  async function uninstall(): Promise<void> {
+    if (uninstalling) return
+    uninstalling = true
+    uninstallError = null
+    try {
+      // On success the app data is gone, the uninstaller starts, and the
+      // app exits — this promise never resolves in that case.
+      await api.uninstallApp()
+    } catch (e) {
+      uninstallError = String(e)
+      uninstalling = false
+    }
+  }
 </script>
 
 <Modal
@@ -259,10 +282,65 @@
       </div>
     </div>
 
+    <!-- Danger zone -->
+    <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+      <div class="flex items-center gap-3">
+        <div class="min-w-0 flex-1">
+          <p class="text-sm font-medium">Uninstall FiveLaunch</p>
+          <p class="text-xs text-muted-foreground">
+            Removes the app and all of its data — every client, settings, and backups.
+          </p>
+        </div>
+        <Button variant="destructive" icon="trash" onclick={() => (uninstallConfirmOpen = true)}>
+          Uninstall…
+        </Button>
+      </div>
+    </div>
+
     {#if saveError}
       <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
         {saveError}
       </div>
     {/if}
   </div>
+</Modal>
+
+<Modal
+  bind:open={uninstallConfirmOpen}
+  title="Uninstall FiveLaunch?"
+  description="This removes the app and permanently deletes all of its data."
+  icon="alert"
+  size="md"
+>
+  <div class="space-y-4">
+    <p class="text-sm leading-relaxed text-muted-foreground">
+      Everything in <span class="font-mono text-xs">%APPDATA%\FiveLaunch</span> is deleted:
+      every client (mods, plugins, settings), your app settings, and backup history. Then the
+      Windows uninstaller runs to remove the app itself. This cannot be undone.
+    </p>
+
+    <div class="flex items-center gap-3 rounded-lg border border-primary/30 bg-accent-wash p-3">
+      <Icon name="info" size={16} class="shrink-0 text-primary" />
+      <p class="min-w-0 flex-1 text-sm leading-relaxed">
+        Want to keep your clients? Copy the <span class="font-mono text-xs">clients</span> folder
+        somewhere safe <span class="font-semibold">before</span> uninstalling.
+      </p>
+      <Button variant="outline" size="sm" icon="folderOpen" onclick={openDataFolder}>
+        Open data folder
+      </Button>
+    </div>
+
+    {#if uninstallError}
+      <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+        {uninstallError}
+      </div>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (uninstallConfirmOpen = false)}>Cancel</Button>
+    <Button variant="destructive" icon="trash" loading={uninstalling} onclick={uninstall}>
+      Delete everything & uninstall
+    </Button>
+  {/snippet}
 </Modal>

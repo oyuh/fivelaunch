@@ -1,5 +1,5 @@
-FiveLaunch — FiveM profile launcher
-by Lawson Hart · fivelaunch.help
+FiveLaunch - FiveM profile launcher
+by Lawson Hart · https://fivelaunch.help
 
 WHAT IT DOES
 FiveLaunch lets you keep multiple FiveM "clients" (profiles), each with its own
@@ -7,7 +7,7 @@ mods, plugins, citizen data, and GTA V graphics settings. When you launch a
 client, FiveLaunch swaps those files into your FiveM install for you, then puts
 everything back the way it was after you play.
 
-BEFORE YOU START — BACK UP YOUR DATA
+BEFORE YOU START: BACK UP YOUR DATA
 The first time you link a client, FiveLaunch moves your existing FiveM files
 aside (into a managed backups folder). Please make sure you have a copy of your
 current FiveM.app mods/plugins/citizen folders, your GTA V settings.xml, and your
@@ -15,3 +15,22 @@ CitizenFX.ini before linking. You'll confirm this inside the app on first run.
 
 Installs per-user (no admin required) and updates itself automatically from
 GitHub releases.
+
+LICENSE
+This software is source-available under the FiveLaunch Source-Available License
+(FiveLaunch-SAL). You may view, use, and modify it for personal or internal use.
+You may not redistribute it or any derivative (including public forks) without
+written permission. By installing, you agree to these terms.
+Full license: https://github.com/oyuh/fivelaunch/blob/master/LICENSE
+Terms of Use: https://fivelaunch.help/legal/terms
+Privacy Policy: https://fivelaunch.help/legal/privacy
+
+LINKS
+Website & docs:  https://fivelaunch.help
+Support:         https://fivelaunch.help/support
+Releases:        https://github.com/oyuh/fivelaunch/releases
+Report an issue: https://github.com/oyuh/fivelaunch/issues
+
+Copyright (c) 2026 Lawson Hart. All rights reserved.
+FiveLaunch is not affiliated with, endorsed by, or associated with Rockstar
+Games, Take-Two Interactive, or the Cfx.re / FiveM project.

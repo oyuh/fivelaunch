@@ -7,6 +7,7 @@
   import GtaSettingsDialog from './lib/components/GtaSettingsDialog.svelte'
   import HistoryDialog from './lib/components/HistoryDialog.svelte'
   import CreateClientDialog from './lib/components/CreateClientDialog.svelte'
+  import DuplicateClientDialog from './lib/components/DuplicateClientDialog.svelte'
   import UpdateDialog from './lib/components/UpdateDialog.svelte'
   import LogsPanel from './lib/components/LogsPanel.svelte'
   import Icon from './lib/components/ui/Icon.svelte'
@@ -48,6 +49,7 @@
   let gtaSettingsOpen = $state(false)
   let historyOpen = $state(false)
   let deleteConfirmOpen = $state(false)
+  let duplicateOpen = $state(false)
   let updateOpen = $state(false)
   let logsOpen = $state(false)
 
@@ -145,6 +147,17 @@
     }
   }
 
+  /** Reselect the client that was launched last (persisted backend-side). */
+  async function restoreSelection(): Promise<void> {
+    if (selectedId) return
+    try {
+      const id = await api.getSelectedClientId()
+      if (id && clients.some((c) => c.id === id)) selectedId = id
+    } catch {
+      // ignore — a missing selection just leaves the empty state
+    }
+  }
+
   onMount(() => {
     firstRunOpen = localStorage.getItem(FIRST_RUN_ACK_KEY) !== 'true'
 
@@ -192,6 +205,7 @@
           api.getResolvedGamePath()
         ])
         await refresh()
+        await restoreSelection()
       } catch (e) {
         error = String(e)
       }
@@ -210,6 +224,8 @@
     launchStatus = 'Preparing launch...'
     try {
       await api.launchClient(selected.id)
+      // The launch bumped last_played backend-side; pull it so the UI shows it.
+      await refresh()
     } catch (e) {
       error = String(e)
       launchStatus = null
@@ -452,6 +468,14 @@
           </div>
 
           <div class="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              icon="copy"
+              onclick={() => (duplicateOpen = true)}
+            >
+              Duplicate
+            </Button>
             <Button variant="outline" size="sm" icon="info" onclick={() => (detailsOpen = true)}>
               Details
             </Button>
@@ -728,6 +752,7 @@
   <GtaSettingsDialog bind:open={gtaSettingsOpen} clientId={selectedId} />
   <HistoryDialog bind:open={historyOpen} />
   <CreateClientDialog bind:open={createOpen} onCreated={onClientCreated} />
+  <DuplicateClientDialog bind:open={duplicateOpen} client={selected} onDuplicated={onClientCreated} />
   <UpdateDialog bind:open={updateOpen} />
   <ConfirmDialog
     bind:open={deleteConfirmOpen}

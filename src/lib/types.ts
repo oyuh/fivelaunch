@@ -27,6 +27,20 @@ export interface LinkOptions {
   citizenFxIni: boolean
 }
 
+/** What to carry over when duplicating a client (mirrors Rust DuplicateOptions). */
+export interface DuplicateOptions {
+  /** Copy the mods folder. */
+  mods: boolean
+  /** Copy the plugins folder. */
+  plugins: boolean
+  /** Copy the citizen folder. */
+  citizen: boolean
+  /** Copy the settings folder (GTA settings + CitizenFX.ini). */
+  settings: boolean
+  /** Copy linking options and pure mode. */
+  config: boolean
+}
+
 export interface ClientStats {
   fileCount: number
   totalBytes: number

@@ -66,6 +66,9 @@ let clients: ClientProfile[] = [
   })
 ]
 
+// The most recently launched client, persisted backend-side in the real app.
+let selectedClientId: string | null = null
+
 let backups: Array<Record<string, unknown>> = [
   {
     name: 'mods_1751700000000',
@@ -134,6 +137,8 @@ mockIPC((cmd, payload) => {
     // Clients
     case 'get_clients':
       return clients
+    case 'get_selected_client_id':
+      return selectedClientId
     case 'get_client_stats':
       return { fileCount: 3_284, totalBytes: 6_871_947_674 }
     case 'list_client_mods':
@@ -148,6 +153,23 @@ mockIPC((cmd, payload) => {
       clients = [...clients, created]
       return created
     }
+    case 'duplicate_client': {
+      const source = clients.find((c) => c.id === args.id)
+      const options = (args.options ?? {}) as Record<string, boolean>
+      const created = client(
+        `id-${Date.now()}`,
+        String(args.name),
+        source?.icon,
+        Date.now(),
+        options.config ? source?.linkOptions : {}
+      )
+      if (options.config && source?.pureMode != null) created.pureMode = source.pureMode
+      clients = [...clients, created]
+      return created
+    }
+    case 'uninstall_app':
+      // Match the real dev-build behavior so the error path is viewable.
+      throw new Error('Uninstaller not found next to the app — is this a development build?')
     case 'set_client_icon': {
       clients = clients.map((c) => (c.id === args.id ? { ...c, icon: String(args.icon) } : c))
       return null
@@ -162,6 +184,7 @@ mockIPC((cmd, payload) => {
       return null
     case 'delete_client':
       clients = clients.filter((c) => c.id !== args.id)
+      if (selectedClientId === args.id) selectedClientId = null
       return null
     case 'update_client_links':
       clients = clients.map((c) =>
@@ -182,8 +205,14 @@ mockIPC((cmd, payload) => {
       return appVersion
 
     // Launch — delay so the "Launching…" state is visible in the preview.
-    case 'launch_client':
+    case 'launch_client': {
+      // Mirror the real backend: bump last_played + remember the selection.
+      selectedClientId = String(args.id)
+      clients = clients.map((c) =>
+        c.id === args.id ? { ...c, lastPlayed: Date.now() } : c
+      )
       return new Promise((resolve) => setTimeout(resolve, 2_500))
+    }
     case 'is_game_running':
       return false
     case 'get_game_busy_state':
@@ -263,15 +292,18 @@ async function boot(): Promise<void> {
 
     // Preview convenience (e.g. the docs landing embed): preselect the first
     // client so the detail panel is populated immediately, without changing the
-    // real app's default of no selection.
+    // real app's default of no selection. Skips if the app already restored a
+    // previously launched client (its name renders as an <h1>), so this stays a
+    // fallback and doesn't mask the real reselect-on-launch behavior.
     const preselect = (tries = 0): void => {
+      if (document.querySelector('main h1')) return
       const btn = Array.from(document.querySelectorAll('button')).find((b) =>
         b.textContent?.includes('Main RP')
       )
       if (btn) btn.click()
       else if (tries < 20) setTimeout(() => preselect(tries + 1), 50)
     }
-    setTimeout(() => preselect(), 60)
+    setTimeout(() => preselect(), 120)
   }
 }
 

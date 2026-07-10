@@ -47,6 +47,18 @@ pub struct ClientProfile {
     pub link_options: LinkOptions,
 }
 
+/// What to carry over when duplicating a client. Folder flags copy the
+/// matching subfolder; `config` copies linking options and pure mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DuplicateOptions {
+    pub mods: bool,
+    pub plugins: bool,
+    pub citizen: bool,
+    pub settings: bool,
+    pub config: bool,
+}
+
 /// Top-level `clients.json`. Note: v1 always writes `selectedClientId`,
 /// including an explicit `null` — so no skip_serializing_if here.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -110,6 +122,24 @@ impl ClientStore {
         self.get_config().clients.into_iter().find(|c| c.id == id)
     }
 
+    /// The client that was most recently launched (persisted across restarts).
+    pub fn get_selected_client_id(&self) -> Option<String> {
+        self.get_config().selected_client_id
+    }
+
+    /// Record a launch: bump the client's `last_played` timestamp and remember
+    /// it as the selected client so the UI can reselect it on next start.
+    /// No-ops on an unknown id (v1-style tolerance).
+    pub fn mark_launched(&self, id: &str) -> Result<(), String> {
+        let mut config = self.get_config();
+        let Some(client) = config.clients.iter_mut().find(|c| c.id == id) else {
+            return Ok(());
+        };
+        client.last_played = Some(now_ms());
+        config.selected_client_id = Some(id.to_string());
+        self.save_config(&config).map_err(|e| e.to_string())
+    }
+
     /// Returns the client's data folder only if it exists (v1 behavior).
     pub fn client_folder_path(&self, id: &str) -> Option<PathBuf> {
         let path = self.data_path.join(id);
@@ -118,6 +148,24 @@ impl ClientStore {
         } else {
             None
         }
+    }
+
+    /// Folder scaffolding, identical to v1 (including the legacy empty
+    /// settings.xml placeholder — the GTA settings code treats it as absent).
+    fn scaffold_client_dirs(&self, id: &str) -> Result<(), String> {
+        let client_path = self.data_path.join(id);
+        let settings_path = client_path.join("settings");
+        for dir in ["mods", "plugins", "citizen"] {
+            fs::create_dir_all(client_path.join(dir)).map_err(|e| e.to_string())?;
+        }
+        fs::create_dir_all(&settings_path).map_err(|e| e.to_string())?;
+        for file in ["settings.xml", "CitizenFX.ini"] {
+            let p = settings_path.join(file);
+            if !p.exists() {
+                fs::write(&p, "").map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
     }
 
     pub fn create_client(&self, name: String, icon: Option<String>) -> Result<ClientProfile, String> {
@@ -141,18 +189,69 @@ impl ClientStore {
             },
         };
 
-        // Folder scaffolding, identical to v1 (including the legacy empty
-        // settings.xml placeholder — the GTA settings code treats it as absent).
-        let client_path = self.data_path.join(&id);
-        let settings_path = client_path.join("settings");
-        for dir in ["mods", "plugins", "citizen"] {
-            fs::create_dir_all(client_path.join(dir)).map_err(|e| e.to_string())?;
-        }
-        fs::create_dir_all(&settings_path).map_err(|e| e.to_string())?;
-        for file in ["settings.xml", "CitizenFX.ini"] {
-            let p = settings_path.join(file);
-            if !p.exists() {
-                fs::write(&p, "").map_err(|e| e.to_string())?;
+        self.scaffold_client_dirs(&id)?;
+
+        config.clients.push(new_client.clone());
+        self.save_config(&config).map_err(|e| e.to_string())?;
+        Ok(new_client)
+    }
+
+    /// Create a new client as a copy of `source_id`, carrying over only the
+    /// folders/config selected in `options`.
+    pub fn duplicate_client(
+        &self,
+        source_id: &str,
+        name: String,
+        options: DuplicateOptions,
+    ) -> Result<ClientProfile, String> {
+        let mut config = self.get_config();
+        let source = config
+            .clients
+            .iter()
+            .find(|c| c.id == source_id)
+            .cloned()
+            .ok_or("Client not found.")?;
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let new_client = ClientProfile {
+            id: id.clone(),
+            name,
+            description: source.description.clone(),
+            icon: source.icon.clone(),
+            pure_mode: if options.config { source.pure_mode } else { None },
+            last_played: Some(now_ms()),
+            link_options: if options.config {
+                source.link_options.clone()
+            } else {
+                LinkOptions {
+                    mods: true,
+                    plugins: true,
+                    plugins_mode: Some(PluginsMode::Sync),
+                    citizen: false,
+                    gta_settings: false,
+                    citizen_fx_ini: false,
+                }
+            },
+        };
+
+        self.scaffold_client_dirs(&id)?;
+
+        let source_path = self.data_path.join(source_id);
+        let dest_path = self.data_path.join(&id);
+        let folders: [(&str, bool); 4] = [
+            ("mods", options.mods),
+            ("plugins", options.plugins),
+            ("citizen", options.citizen),
+            ("settings", options.settings),
+        ];
+        for (folder, wanted) in folders {
+            if !wanted {
+                continue;
+            }
+            let from = source_path.join(folder);
+            if from.is_dir() {
+                super::backups::copy_recursive(&from, &dest_path.join(folder))
+                    .map_err(|e| e.to_string())?;
             }
         }
 
@@ -340,6 +439,125 @@ mod tests {
         let updated = store.get_client(&client.id).unwrap();
         assert_eq!(updated.link_options.plugins_mode, Some(PluginsMode::Junction));
         assert!(updated.link_options.citizen);
+    }
+
+    #[test]
+    fn duplicate_copies_selected_folders_and_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+        let source = store
+            .create_client("Source".into(), Some("car".into()))
+            .unwrap();
+
+        let base = dir.path().join("clients").join(&source.id);
+        fs::write(base.join("mods").join("a.rpf"), b"mod").unwrap();
+        fs::write(base.join("plugins").join("p.asi"), b"plugin").unwrap();
+        fs::write(base.join("settings").join("settings.xml"), b"<x/>").unwrap();
+        let mut opts = source.link_options.clone();
+        opts.plugins_mode = Some(PluginsMode::Junction);
+        store.update_link_options(&source.id, opts).unwrap();
+        store.set_pure_mode(&source.id, Some(2)).unwrap();
+
+        let copy = store
+            .duplicate_client(
+                &source.id,
+                "Copy".into(),
+                DuplicateOptions {
+                    mods: true,
+                    plugins: false,
+                    citizen: false,
+                    settings: true,
+                    config: true,
+                },
+            )
+            .unwrap();
+
+        assert_ne!(copy.id, source.id);
+        assert_eq!(copy.name, "Copy");
+        assert_eq!(copy.icon.as_deref(), Some("car"));
+        assert_eq!(copy.pure_mode, Some(2));
+        assert_eq!(copy.link_options.plugins_mode, Some(PluginsMode::Junction));
+
+        let copy_base = dir.path().join("clients").join(&copy.id);
+        assert!(copy_base.join("mods").join("a.rpf").is_file());
+        assert!(!copy_base.join("plugins").join("p.asi").exists());
+        assert_eq!(
+            fs::read(copy_base.join("settings").join("settings.xml")).unwrap(),
+            b"<x/>"
+        );
+        assert_eq!(store.get_clients().len(), 2);
+    }
+
+    #[test]
+    fn duplicate_without_config_uses_create_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+        let source = store.create_client("Source".into(), None).unwrap();
+        let mut opts = source.link_options.clone();
+        opts.citizen = true;
+        store.update_link_options(&source.id, opts).unwrap();
+        store.set_pure_mode(&source.id, Some(1)).unwrap();
+
+        let copy = store
+            .duplicate_client(&source.id, "Copy".into(), DuplicateOptions::default())
+            .unwrap();
+
+        assert_eq!(copy.pure_mode, None);
+        assert!(!copy.link_options.citizen);
+        assert_eq!(copy.link_options.plugins_mode, Some(PluginsMode::Sync));
+
+        // Nothing selected — the copy still gets the full empty scaffold.
+        let copy_base = dir.path().join("clients").join(&copy.id);
+        for sub in ["mods", "plugins", "citizen", "settings"] {
+            assert!(copy_base.join(sub).is_dir(), "missing {sub}");
+        }
+    }
+
+    #[test]
+    fn duplicate_unknown_source_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+        assert!(store
+            .duplicate_client("nope", "Copy".into(), DuplicateOptions::default())
+            .is_err());
+    }
+
+    #[test]
+    fn mark_launched_bumps_last_played_and_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+        let a = store.create_client("A".into(), None).unwrap();
+        let b = store.create_client("B".into(), None).unwrap();
+        assert_eq!(store.get_selected_client_id(), None);
+
+        // Force an older timestamp so the launch bump is observable.
+        {
+            let mut config = store.get_config();
+            config.clients.iter_mut().for_each(|c| c.last_played = Some(1_000));
+            store.save_config(&config).unwrap();
+        }
+
+        store.mark_launched(&b.id).unwrap();
+        assert_eq!(store.get_selected_client_id().as_deref(), Some(b.id.as_str()));
+        assert!(store.get_client(&b.id).unwrap().last_played.unwrap() > 1_000);
+        // The other client is untouched.
+        assert_eq!(store.get_client(&a.id).unwrap().last_played, Some(1_000));
+
+        // Unknown id is a tolerated no-op that keeps the prior selection.
+        store.mark_launched("nope").unwrap();
+        assert_eq!(store.get_selected_client_id().as_deref(), Some(b.id.as_str()));
+    }
+
+    #[test]
+    fn deleting_selected_client_clears_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(dir.path());
+        let c = store.create_client("C".into(), None).unwrap();
+        store.mark_launched(&c.id).unwrap();
+        assert_eq!(store.get_selected_client_id().as_deref(), Some(c.id.as_str()));
+
+        store.delete_client(&c.id).unwrap();
+        assert_eq!(store.get_selected_client_id(), None);
     }
 
     #[test]
