@@ -1,13 +1,13 @@
 [package]
 name = "fivelaunch"
-version = "2.3.81"
+version = "2.5.1"
 description = "FiveLaunch - launch FiveM with select mods and settings"
 authors = ["Lawson Hart"]
 license = "SEE LICENSE IN LICENSE"
 repository = "https://github.com/oyuh/fivelaunch"
 homepage = "https://fivelaunch.help"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.82"
 
 [lib]
 name = "fivelaunch_lib"
@@ -28,18 +28,18 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
-junction = "1"
-sysinfo = "0.33"
+junction = "2"
+sysinfo = "0.39"
 time = { version = "0.3", features = ["formatting"] }
-quick-xml = "0.37"
+quick-xml = "0.41"
 indexmap = { version = "2", features = ["serde"] }
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 mslnk = "0.1"
 dirs = "6"
 
 [dev-dependencies]
 tempfile = "3"
-criterion = "0.5"
+criterion = "0.8"
 filetime = "0.2"
 
 [[bench]]

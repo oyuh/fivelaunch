@@ -240,7 +240,7 @@ impl ClientStore {
                 None
             },
             link_options: if options.config {
-                source.link_options.clone()
+                source.link_options
             } else {
                 LinkOptions {
                     mods: true,

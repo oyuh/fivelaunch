@@ -88,12 +88,15 @@ pub type FetchJson<'a> = &'a dyn Fn(&str) -> Result<serde_json::Value, String>;
 
 pub fn fetch_json_ureq(url: &str) -> Result<serde_json::Value, String> {
     ureq::get(url)
-        .set("User-Agent", "FiveLaunch")
-        .set("Accept", "application/vnd.github+json")
-        .timeout(std::time::Duration::from_secs(10))
+        .header("User-Agent", "FiveLaunch")
+        .header("Accept", "application/vnd.github+json")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
         .call()
         .map_err(|e| e.to_string())?
-        .into_json::<serde_json::Value>()
+        .body_mut()
+        .read_json::<serde_json::Value>()
         .map_err(|e| e.to_string())
 }
 

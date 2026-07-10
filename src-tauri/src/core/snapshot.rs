@@ -231,7 +231,7 @@ mod tests {
             &h.app_paths,
             Some(&h.override_str),
             DEFAULT_SNAPSHOT_NAME,
-            &[live_xml.clone()],
+            &[live_xml],
             Some(&live_ini),
         )
         .unwrap();
@@ -331,7 +331,7 @@ mod tests {
             &h.app_paths,
             &snap.id,
             Some(&h.override_str),
-            &[target_xml.clone()],
+            std::slice::from_ref(&target_xml),
             Some(&real_ini),
             &mut |s| statuses.push(s.to_string()),
         )
@@ -369,7 +369,7 @@ mod tests {
             &h.app_paths,
             &snap.id,
             Some(&h.override_str),
-            &[target_xml.clone()],
+            std::slice::from_ref(&target_xml),
             Some(&real_ini),
             &mut |_| {},
         )

@@ -85,7 +85,7 @@ fn parse_tree(xml: &str) -> Option<(String, ParsedNode)> {
         for attr in e.attributes().flatten() {
             let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
             let value = attr
-                .unescape_value()
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map(|v| v.to_string())
                 .unwrap_or_default();
             attrs.insert(key, value);
@@ -117,15 +117,13 @@ fn parse_tree(xml: &str) -> Option<(String, ParsedNode)> {
             }
             Ok(Event::Text(t)) => {
                 if let Some(top) = stack.last_mut() {
-                    if let Ok(text) = t.unescape() {
+                    if let Ok(text) = t.xml10_content() {
                         top.1.text.push_str(text.trim());
                     }
                 }
             }
             Ok(Event::End(_)) => {
-                let Some(done) = stack.pop() else {
-                    return None;
-                };
+                let done = stack.pop()?;
                 if let Some(parent) = stack.last_mut() {
                     parent.1.children.push(done);
                 } else if root.is_none() {
@@ -180,7 +178,7 @@ pub fn parse_xml_to_document(xml: &str) -> GtaSettingsDocument {
     };
 
     let mut items = Vec::new();
-    walk_node(&root, &[root_name.clone()], &mut items);
+    walk_node(&root, std::slice::from_ref(&root_name), &mut items);
 
     GtaSettingsDocument { root_name, items }
 }
@@ -801,7 +799,7 @@ mod tests {
         fs::write(&target, SETTINGS_TEMPLATE_XML).unwrap();
 
         let plan = GtaEnforcementPlan {
-            source: source.clone(),
+            source,
             targets: vec![target.clone()],
         };
         let config = EnforcementConfig {

@@ -1,6 +1,6 @@
 use std::io;
 use std::path::Path;
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 /// True if any process with one of the given image names is running.
 ///
@@ -13,12 +13,14 @@ pub fn any_process_running(names: &[&str]) -> bool {
         return false;
     }
 
+    // Names only — skip the per-process CPU/memory/disk stats the default
+    // refresh collects; this runs in a poll loop while the game is up.
     let mut sys = System::new();
-    sys.refresh_processes(ProcessesToUpdate::All, true);
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
 
     sys.processes().values().any(|p| {
         let name = p.name().to_string_lossy().to_lowercase();
-        lowered.iter().any(|wanted| *wanted == name)
+        lowered.contains(&name)
     })
 }
 

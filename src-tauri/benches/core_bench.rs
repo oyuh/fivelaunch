@@ -37,11 +37,12 @@ fn bench_config_parse(c: &mut Criterion) {
     // A config with 50 clients — far above realistic, so real usage is faster.
     let mut config = ClientConfig::default();
     for i in 0..50 {
-        let mut client = fivelaunch_lib::core::clients::ClientProfile::default();
-        client.id = format!("00000000-0000-4000-8000-{i:012}");
-        client.name = format!("Client {i}");
-        client.last_played = Some(1_719_849_600_000 + i as u64);
-        config.clients.push(client);
+        config.clients.push(fivelaunch_lib::core::clients::ClientProfile {
+            id: format!("00000000-0000-4000-8000-{i:012}"),
+            name: format!("Client {i}"),
+            last_played: Some(1_719_849_600_000 + i as u64),
+            ..Default::default()
+        });
     }
     let json = serde_json::to_string_pretty(&config).unwrap();
 

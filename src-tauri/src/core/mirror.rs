@@ -35,14 +35,13 @@ pub enum TiePreference {
 /// (v1 `getMtimeMsSafe`). f64 keeps the persisted cache format identical
 /// to v1's JS `mtimeMs` floats.
 pub fn mtime_ms(path: &Path) -> f64 {
-    let Ok(meta) = fs::metadata(path) else {
-        return 0.0;
-    };
-    let Ok(modified) = meta.modified() else {
-        return 0.0;
-    };
-    modified
-        .duration_since(std::time::UNIX_EPOCH)
+    fs::metadata(path).map(|m| mtime_ms_from_meta(&m)).unwrap_or(0.0)
+}
+
+fn mtime_ms_from_meta(meta: &fs::Metadata) -> f64 {
+    meta.modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs_f64() * 1000.0)
         .unwrap_or(0.0)
 }
@@ -131,6 +130,20 @@ pub fn list_files_recursive(
     filter_rel: Option<&dyn Fn(&str) -> bool>,
     max_files: Option<usize>,
 ) -> Vec<String> {
+    list_files_with_mtime(base_dir, filter_rel, max_files)
+        .into_iter()
+        .map(|(rel, _)| rel)
+        .collect()
+}
+
+/// Like [`list_files_recursive`], but also yields each file's mtime taken
+/// from the metadata walkdir already fetched during enumeration — the mirror
+/// loops below would otherwise re-stat every source file.
+fn list_files_with_mtime(
+    base_dir: &Path,
+    filter_rel: Option<&dyn Fn(&str) -> bool>,
+    max_files: Option<usize>,
+) -> Vec<(String, f64)> {
     let mut out = Vec::new();
 
     let walker = WalkDir::new(base_dir)
@@ -151,7 +164,11 @@ pub fn list_files_recursive(
                 continue;
             }
         }
-        out.push(rel);
+        let mtime = entry
+            .metadata()
+            .map(|m| mtime_ms_from_meta(&m))
+            .unwrap_or(0.0);
+        out.push((rel, mtime));
         if let Some(max) = max_files {
             if out.len() >= max {
                 break;
@@ -178,15 +195,15 @@ pub fn mirror_folder_source_wins_one_way(
 
     let mut p = MirrorProgress::default();
 
-    for rel in list_files_recursive(source_dir, filter_rel, max_files) {
+    for (rel, from_time) in list_files_with_mtime(source_dir, filter_rel, max_files) {
         let from = source_dir.join(&rel);
         let to = target_dir.join(&rel);
 
-        let from_time = mtime_ms(&from);
         let cached = cache.as_ref().and_then(|c| c.get(&rel)).copied();
-        let to_exists = to.exists();
 
-        if to_exists && cached.is_some_and(|c| (c - from_time).abs() <= MTIME_SKEW_MS) {
+        // Cache check first: only stat the target when the cache says the
+        // source is unchanged (the common warm-launch case).
+        if cached.is_some_and(|c| (c - from_time).abs() <= MTIME_SKEW_MS) && to.exists() {
             p.skipped += 1;
         } else if copy_file_best_effort(&from, &to) {
             if let Some(c) = cache.as_deref_mut() {
@@ -206,7 +223,7 @@ pub fn mirror_folder_source_wins_one_way(
         }
     }
 
-    if let Some(cb) = on_progress.as_deref_mut() {
+    if let Some(cb) = on_progress {
         cb(&p);
     }
     p
@@ -227,13 +244,14 @@ pub fn mirror_folder_prefer_newest_one_way(
 
     let mut p = MirrorProgress::default();
 
-    for rel in list_files_recursive(source_dir, filter_rel, max_files) {
+    for (rel, from_time) in list_files_with_mtime(source_dir, filter_rel, max_files) {
         let from = source_dir.join(&rel);
         let to = target_dir.join(&rel);
 
-        let from_time = mtime_ms(&from);
+        // One stat covers both the existence check and the target mtime.
+        let to_meta = fs::metadata(&to).ok();
 
-        if !to.exists() {
+        if to_meta.is_none() {
             if copy_file_best_effort(&from, &to) {
                 if let Some(c) = cache.as_deref_mut() {
                     c.insert(rel, from_time);
@@ -246,7 +264,7 @@ pub fn mirror_folder_prefer_newest_one_way(
                 // Source unchanged since last mirror; assume target correct.
                 p.skipped += 1;
             } else {
-                let to_time = mtime_ms(&to);
+                let to_time = to_meta.map(|m| mtime_ms_from_meta(&m)).unwrap_or(0.0);
                 if from_time > to_time + MTIME_SKEW_MS {
                     if copy_file_best_effort(&from, &to) {
                         if let Some(c) = cache.as_deref_mut() {
@@ -272,7 +290,7 @@ pub fn mirror_folder_prefer_newest_one_way(
         }
     }
 
-    if let Some(cb) = on_progress.as_deref_mut() {
+    if let Some(cb) = on_progress {
         cb(&p);
     }
     p

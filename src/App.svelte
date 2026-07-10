@@ -36,7 +36,6 @@
   let renaming = $state(false)
   let stats = $state<ClientStats | null>(null)
   let appVersion = $state('')
-  let resolvedGamePath = $state<string | null>(null)
   let error = $state<string | null>(null)
   let launching = $state(false)
   let launchStatus = $state<string | null>(null)
@@ -206,10 +205,7 @@
         const settings = await api.getSettings()
         applyPrimaryHexToRoot(settings.themePrimaryHex ?? DEFAULT_PRIMARY_HEX)
         snapshotClientId = settings.snapshotClientId ?? null
-        ;[appVersion, resolvedGamePath] = await Promise.all([
-          api.getAppVersion(),
-          api.getResolvedGamePath()
-        ])
+        appVersion = await api.getAppVersion()
         await refresh()
         await restoreSelection()
       } catch (e) {
@@ -310,11 +306,10 @@
     firstRunOpen = false
   }
 
-  /** Reload settings-derived state (game path, snapshot id) + the client list. */
+  /** Reload settings-derived state (snapshot id) + the client list. */
   async function refreshMeta(): Promise<void> {
     try {
-      const [path, settings] = await Promise.all([api.getResolvedGamePath(), api.getSettings()])
-      resolvedGamePath = path
+      const settings = await api.getSettings()
       snapshotClientId = settings.snapshotClientId ?? null
       await refresh()
     } catch {
@@ -807,18 +802,13 @@
     </div>
 
     <div class="flex min-w-0 items-center gap-3">
-      <span
-        class="min-w-0 truncate font-mono text-muted-foreground/70"
-        use:tooltip={resolvedGamePath ?? undefined}
-      >
-        {resolvedGamePath ?? 'FiveM not found · set the game path in settings'}
-      </span>
-      <span class="shrink-0 text-divider">·</span>
       <button
-        class="shrink-0 font-medium transition-colors hover:text-primary"
-        onclick={() => api.openUrl('https://fivelaunch.help').catch(() => {})}
+        class="flex shrink-0 items-center gap-1.5 font-medium transition-colors hover:text-primary"
+        use:tooltip={'Get help & support'}
+        onclick={() => api.openUrl('https://fivelaunch.help/support').catch(() => {})}
       >
-        fivelaunch.help
+        <Icon name="lifeBuoy" size={13} />
+        Support
       </button>
       <span class="shrink-0 text-muted-foreground/70">© {new Date().getFullYear()} FiveLaunch</span>
     </div>

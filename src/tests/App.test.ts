@@ -395,12 +395,14 @@ describe('App shell', () => {
     expect(await screen.findByText(/No backups yet/)).toBeInTheDocument()
   })
 
-  it('shows the app version and resolved game path in the footer', async () => {
+  it('shows the app version and a support link in the footer, not the game path', async () => {
     render(App)
 
     expect(await screen.findByText(/FiveLaunch v2\.0\.0/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /support/i })).toBeInTheDocument()
+    // The game path was intentionally removed from the footer.
     expect(
-      await screen.findByText('C:\\Users\\test\\AppData\\Local\\FiveM\\FiveM.app')
-    ).toBeInTheDocument()
+      screen.queryByText('C:\\Users\\test\\AppData\\Local\\FiveM\\FiveM.app')
+    ).not.toBeInTheDocument()
   })
 })

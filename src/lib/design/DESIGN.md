@@ -7,7 +7,7 @@ The living version renders in the browser: `bun run ui` → open `?screen=styleg
 
 | Role | Family | Token / class |
 | --- | --- | --- |
-| Body & UI | **Raleway** (400–700) | `--font-sans` / `font-sans` (default) |
+| Body & UI | **Plus Jakarta Sans** (400–700) | `--font-sans` / `font-sans` (default) |
 | Super headers, dialog titles | **Archivo** (600–800) | `--font-display` / `font-display` |
 | Technical: IDs, paths, logs, stat numbers | **Geist Pixel** (Square) | `--font-mono` / `font-mono` |
 

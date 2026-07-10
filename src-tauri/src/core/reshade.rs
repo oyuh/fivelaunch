@@ -437,9 +437,9 @@ pub fn run_reshade_discovery(
             let lower = hint.to_lowercase();
             if lower.ends_with("reshadepreset.ini") {
                 preset_inis.insert(p);
-            } else if lower.ends_with("reshade.ini") {
-                configs.insert(p);
-            } else if lower.ends_with(".ini") && looks_like_reshade_config_ini(&p) {
+            } else if lower.ends_with("reshade.ini")
+                || (lower.ends_with(".ini") && looks_like_reshade_config_ini(&p))
+            {
                 configs.insert(p);
             }
         }

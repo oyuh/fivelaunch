@@ -609,8 +609,7 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
             }
 
             let app = app.clone();
-            let paths = paths.clone();
-            let game_path_override = app_settings.game_path.clone();
+            let game_path_override = app_settings.game_path;
             new_runtime.restore = Some(BackgroundTask::spawn(move |stop| {
                 run_restore_watcher(
                     &app,

@@ -154,7 +154,7 @@ pub fn list_backups(backups_dir: &Path) -> Vec<BackupEntry> {
         .collect();
 
     // Newest first.
-    out.sort_by(|a, b| b.created_ms.cmp(&a.created_ms));
+    out.sort_by_key(|e| std::cmp::Reverse(e.created_ms));
     out
 }
 

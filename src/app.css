@@ -2,18 +2,18 @@
  * FiveLaunch design-system tokens.
  *
  * Fonts:
- *   - Raleway     -> body / UI (--font-sans)
- *   - Archivo     -> big display headers (--font-display)
- *   - Geist Pixel -> everything technical: IDs, paths, logs, stat numbers
- *                    (--font-mono), with Geist Mono as a glyph fallback.
+ *   - Plus Jakarta Sans -> body / UI (--font-sans)
+ *   - Archivo           -> big display headers (--font-display)
+ *   - Geist Pixel       -> everything technical: IDs, paths, logs, stat numbers
+ *                          (--font-mono), with Geist Mono as a glyph fallback.
  *
  * Colours are HSL CSS variables so the runtime theme picker (theme.ts) can
  * rewrite --primary / --ring live; the accent gradient + glow derive from them.
  */
-@import '@fontsource/raleway/400.css';
-@import '@fontsource/raleway/500.css';
-@import '@fontsource/raleway/600.css';
-@import '@fontsource/raleway/700.css';
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
 @import '@fontsource/archivo/600.css';
 @import '@fontsource/archivo/700.css';
 @import '@fontsource/archivo/800.css';
@@ -24,8 +24,8 @@
 @import 'tailwindcss';
 
 @theme inline {
-  --font-sans: 'Raleway', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Archivo', 'Raleway', ui-sans-serif, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Archivo', 'Plus Jakarta Sans', ui-sans-serif, sans-serif;
   --font-mono: 'Geist Pixel', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
 
   --color-background: hsl(var(--background));

@@ -39,7 +39,7 @@ pub fn run() {
             // Global logger: stderr + ring buffer + live `app-log` events.
             let handle = app.handle().clone();
             core::log_store::StoreLogger::install(
-                log_store.clone(),
+                log_store,
                 Box::new(move |entry| {
                     use tauri::Emitter;
                     let _ = handle.emit("app-log", entry.clone());

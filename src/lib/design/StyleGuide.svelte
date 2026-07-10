@@ -57,9 +57,9 @@
       <div class="space-y-3 rounded-lg border border-divider bg-surface-1 p-6">
         <p class="font-display text-3xl font-extrabold">Archivo · super headers</p>
         <p class="font-sans text-base">
-          Raleway · the body & UI typeface. The quick brown fox jumps over 13 lazy dogs.
+          Plus Jakarta Sans · the body & UI typeface. The quick brown fox jumps over 13 lazy dogs.
         </p>
-        <p class="font-sans text-sm font-semibold">Raleway Semibold · labels and buttons</p>
+        <p class="font-sans text-sm font-semibold">Plus Jakarta Sans Semibold · labels and buttons</p>
         <div class="border-t border-divider pt-3">
           <p class="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
             Geist Pixel · technical text (IDs, paths, logs, numbers). Compare variants:
