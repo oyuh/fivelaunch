@@ -96,7 +96,7 @@ let backups: Array<Record<string, unknown>> = [
 
 // Version shown throughout the preview. Defaults to a recent release and is
 // updated to the real latest GitHub release tag in boot() before mounting.
-let appVersion = '2.5.3'
+let appVersion = '2.5.31'
 
 const seedLogs: AppLogEntry[] = [
   { id: 1, ts: Date.now() - 61_000, level: 'info', message: `FiveLaunch v${appVersion} started`, source: 'main' },
