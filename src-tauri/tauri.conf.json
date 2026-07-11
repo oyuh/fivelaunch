@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "FiveLaunch",
-        "width": 1131,
-        "height": 788,
+        "width": 1156,
+        "height": 907,
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
