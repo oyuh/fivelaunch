@@ -37,6 +37,27 @@ impl LaunchRuntime {
             .is_some_and(RuntimeSyncHandle::is_finalizing)
     }
 
+    /// True while ANY session work is still in flight — plugins sync/finalize,
+    /// GTA settings enforcement, file-sync loops, or the restore-on-close
+    /// watcher. The launch button stays disabled until this clears so a new
+    /// launch can't interrupt a restore mid-copy.
+    pub fn is_busy(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        let plugins_running = self
+            .plugins
+            .as_ref()
+            .is_some_and(|p| !p.finished_flag().load(Ordering::SeqCst));
+        let restore_running = self
+            .restore
+            .as_ref()
+            .is_some_and(|t| !t.finished_flag().load(Ordering::SeqCst));
+        let tasks_running = self
+            .tasks
+            .iter()
+            .any(|t| !t.finished_flag().load(Ordering::SeqCst));
+        plugins_running || restore_running || tasks_running
+    }
+
     pub fn stop_all(&mut self) {
         if let Some(mut restore) = self.restore.take() {
             restore.stop_and_join();
@@ -887,22 +908,27 @@ pub fn is_game_running() -> bool {
     crate::core::process::is_game_running()
 }
 
-/// Same shape as v1's `get-game-busy-state` response.
+/// Same shape as v1's `get-game-busy-state` response, plus `busy` which
+/// covers ALL in-flight session work (restore-on-close included).
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameBusyState {
+    /// Plugins sync is finalizing — drives the "plugins sync running" badge.
     pub plugins_sync_busy: bool,
+    /// Any session work is still running; the launch button stays disabled.
+    pub busy: bool,
 }
 
 #[tauri::command]
 pub fn get_game_busy_state(state: State<'_, AppState>) -> GameBusyState {
-    let busy = state
+    let (plugins_sync_busy, busy) = state
         .runtime
         .lock()
-        .map(|r| r.plugins_finalizing())
-        .unwrap_or(false);
+        .map(|r| (r.plugins_finalizing(), r.is_busy()))
+        .unwrap_or((false, false));
     GameBusyState {
-        plugins_sync_busy: busy,
+        plugins_sync_busy,
+        busy,
     }
 }
 

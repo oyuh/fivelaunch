@@ -39,6 +39,9 @@
   let launching = $state(false)
   let launchStatus = $state<string | null>(null)
   let pluginsSyncBusy = $state(false)
+  /** Any session work still running (sync/finalize/enforcement/restore) —
+   * keeps the launch button disabled until everything is wound down. */
+  let busy = $state(false)
 
   // Dialogs / panels
   let settingsOpen = $state(false)
@@ -209,6 +212,17 @@
     action.catch((e) => (error = String(e)))
   }
 
+  /** Pull the current background-work state that gates the launch button. */
+  async function refreshBusy(): Promise<void> {
+    try {
+      const s = await api.getGameBusyState()
+      pluginsSyncBusy = s.pluginsSyncBusy
+      busy = s.busy
+    } catch {
+      // best-effort; a failed poll leaves the last known state
+    }
+  }
+
   async function refresh(): Promise<void> {
     clients = await api.getClients()
     if (selectedId && !clients.some((c) => c.id === selectedId)) {
@@ -255,10 +269,7 @@
     // ticks while hidden (minimized to tray) and catch up on re-show.
     const pollBusy = () => {
       if (document.hidden) return
-      api
-        .getGameBusyState()
-        .then((s) => (pluginsSyncBusy = s.pluginsSyncBusy))
-        .catch(() => {})
+      void refreshBusy()
     }
     pollBusy()
     const busyTimer = setInterval(pollBusy, 3000)
@@ -308,6 +319,9 @@
       launchStatus = null
     } finally {
       launching = false
+      // Reflect the new session's background work immediately so the button
+      // stays disabled without waiting for the next 3s poll.
+      void refreshBusy()
     }
   }
 
@@ -629,30 +643,15 @@
             full
             icon="play"
             class="h-14 text-lg"
-            disabled={launching || pluginsSyncBusy}
+            disabled={launching || busy}
             loading={launching}
-            title={pluginsSyncBusy ? 'Waiting for the previous plugins sync to finish' : undefined}
+            title={busy
+              ? 'Finishing the previous session (sync / restore) — please wait'
+              : undefined}
             onclick={launchSelected}
           >
-            {launching ? 'Launching…' : pluginsSyncBusy ? 'Sync busy…' : `Launch ${selected.name}`}
+            {launching ? 'Launching…' : busy ? 'Please wait…' : `Launch ${selected.name}`}
           </Button>
-
-          {#if launchStatus}
-            <div class="mt-2 flex items-center gap-2 rounded-md bg-surface-2 px-3 py-2">
-              {#if launching}
-                <span
-                  class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-surface-3 border-t-primary"
-                ></span>
-              {/if}
-              <p
-                class="truncate text-xs {launchStatus.startsWith('WARNING')
-                  ? 'text-destructive'
-                  : 'text-muted-foreground'}"
-              >
-                {launchStatus}
-              </p>
-            </div>
-          {/if}
 
           <!-- Linking -->
           <div class="mt-5">
@@ -859,7 +858,29 @@
       {/if}
     </div>
 
-    <div class="flex min-w-0 items-center gap-3">
+    <!-- Live launch/session status: fills the middle empty space, truncates
+         with an ellipsis, and is mirrored into Logs. -->
+    <div class="flex min-w-0 flex-1 items-center justify-center overflow-hidden">
+      {#if launchStatus}
+        <div class="flex min-w-0 items-center gap-1.5">
+          {#if launching || busy}
+            <span
+              class="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border-2 border-surface-3 border-t-primary"
+            ></span>
+          {/if}
+          <span
+            class="truncate font-mono text-[11px] {launchStatus.startsWith('WARNING')
+              ? 'text-destructive'
+              : 'text-muted-foreground'}"
+            use:tooltip={launchStatus}
+          >
+            {launchStatus}
+          </span>
+        </div>
+      {/if}
+    </div>
+
+    <div class="flex shrink-0 items-center gap-3">
       <button
         class="flex shrink-0 items-center gap-1.5 font-medium transition-colors hover:text-primary"
         use:tooltip={'Get help & support'}

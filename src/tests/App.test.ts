@@ -73,7 +73,7 @@ function setupFakeBackend(): void {
       case 'get_client_stats':
         return { fileCount: 3, totalBytes: 2048 }
       case 'get_game_busy_state':
-        return { pluginsSyncBusy: false }
+        return { pluginsSyncBusy: false, busy: false }
       case 'create_client': {
         const created = makeClient(`id-${String(args.name)}`, String(args.name))
         created.icon = (args.icon as string) ?? 'gamepad'

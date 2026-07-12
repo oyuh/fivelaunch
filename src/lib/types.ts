@@ -61,6 +61,8 @@ export interface AppSettings {
 
 export interface GameBusyState {
   pluginsSyncBusy: boolean
+  /** Any session work (sync/finalize/enforcement/restore) is still running. */
+  busy: boolean
 }
 
 export interface GtaSettingsItem {

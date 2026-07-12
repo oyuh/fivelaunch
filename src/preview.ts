@@ -96,7 +96,7 @@ let backups: Array<Record<string, unknown>> = [
 
 // Version shown throughout the preview. Defaults to a recent release and is
 // updated to the real latest GitHub release tag in boot() before mounting.
-let appVersion = '2.6.1'
+let appVersion = '2.6.2'
 
 const seedLogs: AppLogEntry[] = [
   { id: 1, ts: Date.now() - 61_000, level: 'info', message: `FiveLaunch v${appVersion} started`, source: 'main' },
@@ -251,7 +251,7 @@ mockIPC((cmd, payload) => {
     case 'is_game_running':
       return false
     case 'get_game_busy_state':
-      return { pluginsSyncBusy: false }
+      return { pluginsSyncBusy: false, busy: false }
 
     // Logs / updates / shortcuts
     case 'get_app_logs':
