@@ -557,10 +557,13 @@ pub fn run_launch_blocking(app: &tauri::AppHandle, id: &str) -> Result<(), Strin
     let spawn_fn =
         move |exe: &std::path::Path| crate::core::process::spawn_detached(exe, &pure_args);
     let gta_targets_fn = |o: Option<&str>| crate::core::gta_settings::gta_settings_targets(o);
+    let gta_repair_sources_fn =
+        |o: Option<&str>| crate::core::gta_settings::resolve_external_repair_sources(o);
     let deps = crate::core::launch::LaunchDeps {
         is_game_running: &crate::core::process::is_game_running,
         spawn: &spawn_fn,
         gta_targets: &gta_targets_fn,
+        gta_repair_sources: &gta_repair_sources_fn,
         citizen_fx_ini: &crate::core::paths::citizen_fx_ini_path,
     };
 
@@ -1048,16 +1051,18 @@ pub fn save_client_gta_settings(
     id: String,
     doc: GtaSettingsDocument,
 ) -> Result<GtaSettingsSaveResult, String> {
-    // Prefer the user's current live game settings when repairing gaps —
-    // the template is only the last resort.
-    let live = crate::core::gta_settings::load_live_settings_document(
+    // Prefer the user's authoritative GTA V settings (the real
+    // Documents\Rockstar Games file, with the GPU) and, failing that, the
+    // OS-detected GPU when repairing gaps — the template is only the last resort.
+    let external = crate::core::gta_settings::resolve_external_repair_sources(
         state.game_path_override().as_deref(),
     );
+    let external_refs: Vec<&GtaSettingsDocument> = external.iter().collect();
     crate::core::gta_settings::save_client_settings(
         &state.paths.clients_data(),
         &id,
         &doc,
-        live.as_ref(),
+        &external_refs,
     )
 }
 

@@ -352,30 +352,88 @@ pub struct GtaSettingsSaveResult {
     pub repairs: Vec<String>,
 }
 
-/// Parse the live game's current settings file (first real-looking target),
-/// used as the preferred fallback source when repairing documents.
-pub fn load_live_settings_document(game_path_override: Option<&str>) -> Option<GtaSettingsDocument> {
-    gta_settings_targets(game_path_override)
+/// Parse the user's **authoritative** GTA V settings — the first real-looking
+/// file in `paths::gta_settings_candidates` (which now prefers the real
+/// `Documents\Rockstar Games\GTA V\settings.xml`). Used as the preferred
+/// fallback source when repairing documents.
+///
+/// This is the source of truth for `VideoCardDescription` (the detected GPU
+/// name). GTA compares that name against the hardware it finds at boot; if the
+/// applied file is missing it or it doesn't match, the game discards the
+/// graphics block and re-runs auto-detection — the classic "I changed the
+/// settings but they don't apply in game" symptom. Carrying the real GPU into
+/// every saved/applied file is what stops that.
+pub fn load_authoritative_gta_settings(
+    game_path_override: Option<&str>,
+) -> Option<GtaSettingsDocument> {
+    paths::gta_settings_candidates(game_path_override)
         .iter()
-        .find(|t| looks_like_gta_settings_xml(t))
-        .and_then(|t| fs::read_to_string(t).ok())
+        .find(|p| looks_like_gta_settings_xml(p))
+        .and_then(|p| fs::read_to_string(p).ok())
         .map(|xml| parse_xml_to_document(&xml))
 }
 
+/// A synthetic one-item document carrying only `VideoCardDescription`, filled
+/// from the OS-detected GPU. Used as the LAST-RESORT repair fallback so a
+/// machine with no existing settings file still applies a real GPU name (which
+/// stops GTA from re-detecting and dropping the graphics). Returns `None` when
+/// the GPU couldn't be determined.
+pub fn detected_gpu_fallback_document() -> Option<GtaSettingsDocument> {
+    let name = super::gpu::detect_gpu_description()?;
+    Some(GtaSettingsDocument {
+        root_name: "Settings".to_string(),
+        items: vec![GtaSettingsItem {
+            path: "Settings/VideoCardDescription".to_string(),
+            attributes: IndexMap::from([("#text".to_string(), name)]),
+        }],
+    })
+}
+
+/// Does `doc` already carry a non-empty `VideoCardDescription` (the GPU name)?
+pub fn document_has_video_card(doc: &GtaSettingsDocument) -> bool {
+    doc.items.iter().any(|i| {
+        i.path.rsplit('/').next() == Some("VideoCardDescription")
+            && i.attributes.values().any(|v| !v.is_empty())
+    })
+}
+
+/// The external repair sources for a save/apply, resolved at the edge (they do
+/// real file + OS I/O, so they don't belong inside the pure core repair): the
+/// user's authoritative GTA settings first, then the OS-detected GPU as a last
+/// resort. Callers pass the returned docs into `save_client_settings` /
+/// `apply_gta_settings` (which append the template themselves).
+pub fn resolve_external_repair_sources(
+    game_path_override: Option<&str>,
+) -> Vec<GtaSettingsDocument> {
+    let mut sources = Vec::new();
+    let authoritative = load_authoritative_gta_settings(game_path_override);
+    let already_has_gpu = authoritative.as_ref().is_some_and(document_has_video_card);
+    if let Some(doc) = authoritative {
+        sources.push(doc);
+    }
+    // OS GPU detection spawns a process, so only pay for it when no real
+    // settings file already carries a GPU (the common case does).
+    if !already_has_gpu {
+        if let Some(doc) = detected_gpu_fallback_document() {
+            sources.push(doc);
+        }
+    }
+    sources
+}
+
 /// Validate + repair `doc` against the schema, then atomically write the
-/// canonical XML. `live` (the game's current settings, when available) is
-/// preferred over the embedded template for filling missing/invalid values.
+/// canonical XML. `external_fallbacks` (the user's authoritative GTA settings
+/// and/or detected GPU, resolved by the caller) are preferred over the embedded
+/// template for filling missing/invalid values — see
+/// `resolve_external_repair_sources`.
 pub fn save_client_settings(
     clients_data: &Path,
     client_id: &str,
     doc: &GtaSettingsDocument,
-    live: Option<&GtaSettingsDocument>,
+    external_fallbacks: &[&GtaSettingsDocument],
 ) -> Result<GtaSettingsSaveResult, String> {
     let template = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
-    let mut fallbacks: Vec<&GtaSettingsDocument> = Vec::new();
-    if let Some(live) = live {
-        fallbacks.push(live);
-    }
+    let mut fallbacks: Vec<&GtaSettingsDocument> = external_fallbacks.to_vec();
     fallbacks.push(&template);
 
     let outcome = super::gta_schema::repair_document(doc, &fallbacks);
@@ -448,15 +506,25 @@ pub fn import_from_documents(
             source.display()
         ));
     }
-    Ok(save_client_settings(clients_data, client_id, &doc, None)?.document)
+    // The imported file usually carries the GPU already; only detect it as a
+    // backstop (which spawns a process) if the source lacked VideoCardDescription.
+    let gpu = if document_has_video_card(&doc) {
+        None
+    } else {
+        detected_gpu_fallback_document()
+    };
+    let fallbacks: Vec<&GtaSettingsDocument> = gpu.iter().collect();
+    Ok(save_client_settings(clients_data, client_id, &doc, &fallbacks)?.document)
 }
 
 pub fn import_from_template(
     clients_data: &Path,
     client_id: &str,
 ) -> Result<GtaSettingsDocument, String> {
+    // Keep the template pristine (no GPU/live values); a template-based client
+    // gets its GPU filled from the real sources when it is applied on launch.
     let doc = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
-    Ok(save_client_settings(clients_data, client_id, &doc, None)?.document)
+    Ok(save_client_settings(clients_data, client_id, &doc, &[])?.document)
 }
 
 // ---------------------------------------------------------------------------
@@ -591,13 +659,18 @@ pub struct GtaEnforcementPlan {
 /// enforcement plan to run after the game spawns.
 ///
 /// The client's file is never copied blind: it is parsed, validated against
-/// the schema, and repaired (missing/invalid values filled from the CURRENT
-/// live game file first, then the template) so the game always receives a
-/// complete document it will accept instead of resetting to defaults.
+/// the schema, and repaired so the game always receives a complete document —
+/// including the real `VideoCardDescription` (GPU) — that it will accept
+/// instead of resetting to defaults. Missing/invalid values are filled from,
+/// in order: the CURRENT live game file, the caller-supplied
+/// `external_fallbacks` (the authoritative `Documents\Rockstar Games\GTA V\
+/// settings.xml` and the OS-detected GPU — see `resolve_external_repair_sources`),
+/// then the embedded template.
 pub fn apply_gta_settings(
     client_path: &Path,
     targets: Vec<PathBuf>,
     backups_dir: &Path,
+    external_fallbacks: &[&GtaSettingsDocument],
     status: &mut dyn FnMut(&str),
 ) -> Result<GtaEnforcementPlan, String> {
     status("Applying GTA settings...");
@@ -618,6 +691,7 @@ pub fn apply_gta_settings(
     if let Some(doc) = &live_doc {
         fallbacks.push(doc);
     }
+    fallbacks.extend_from_slice(external_fallbacks);
     fallbacks.push(&template_doc);
 
     let outcome = super::gta_schema::repair_document(&client_doc, &fallbacks);
@@ -902,7 +976,7 @@ mod tests {
         fs::create_dir_all(clients_data.join("abc")).unwrap();
 
         let doc = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
-        let result = save_client_settings(&clients_data, "abc", &doc, None).unwrap();
+        let result = save_client_settings(&clients_data, "abc", &doc, &[]).unwrap();
         assert!(result.repairs.is_empty(), "template must save clean: {:?}", result.repairs);
 
         let loaded = get_client_settings(&clients_data, "abc");
@@ -929,7 +1003,7 @@ mod tests {
             }
         }
 
-        let result = save_client_settings(&clients_data, "abc", &doc, None).unwrap();
+        let result = save_client_settings(&clients_data, "abc", &doc, &[]).unwrap();
         assert!(!result.repairs.is_empty());
 
         let loaded = get_client_settings(&clients_data, "abc");
@@ -955,6 +1029,7 @@ mod tests {
             &client,
             vec![target_a.clone(), target_b.clone()],
             &store,
+            &[],
             &mut |_| {},
         )
         .unwrap();
@@ -1000,7 +1075,7 @@ mod tests {
         .unwrap();
 
         let mut statuses = Vec::new();
-        apply_gta_settings(&client, vec![target.clone()], &store, &mut |s| {
+        apply_gta_settings(&client, vec![target.clone()], &store, &[], &mut |s| {
             statuses.push(s.to_string())
         })
         .unwrap();
@@ -1035,6 +1110,44 @@ mod tests {
         let client_file =
             fs::read_to_string(client.join("settings").join("gta5_settings.xml")).unwrap();
         assert_eq!(parse_xml_to_document(&client_file), applied);
+    }
+
+    #[test]
+    fn apply_carries_video_card_description_into_applied_file() {
+        // Regression: a client configured from the template has no GPU name.
+        // GTA drops the graphics block (and re-detects) unless the applied file
+        // carries VideoCardDescription — so it must be pulled from the live
+        // game file, which is where the real GPU lives.
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("client");
+        let store = dir.path().join("backups");
+        let target = dir.path().join("roaming").join("gta5_settings.xml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+
+        // Live game file carries the detected GPU.
+        let live_xml = SETTINGS_TEMPLATE_XML.replace(
+            "</Settings>",
+            "  <VideoCardDescription>NVIDIA GeForce RTX 4090</VideoCardDescription>\n</Settings>",
+        );
+        fs::write(&target, &live_xml).unwrap();
+
+        // Client file: the plain template (no GPU).
+        let settings_dir = client.join("settings");
+        fs::create_dir_all(&settings_dir).unwrap();
+        fs::write(settings_dir.join("gta5_settings.xml"), SETTINGS_TEMPLATE_XML).unwrap();
+
+        apply_gta_settings(&client, vec![target.clone()], &store, &[], &mut |_| {}).unwrap();
+
+        let applied = parse_xml_to_document(&fs::read_to_string(&target).unwrap());
+        let vcd = applied
+            .items
+            .iter()
+            .find(|i| i.path == "Settings/VideoCardDescription")
+            .expect("applied file must carry VideoCardDescription so GTA keeps the graphics");
+        assert_eq!(
+            vcd.attributes.get("#text").map(String::as_str),
+            Some("NVIDIA GeForce RTX 4090")
+        );
     }
 
     #[test]

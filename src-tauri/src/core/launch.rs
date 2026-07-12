@@ -25,6 +25,11 @@ pub struct LaunchDeps<'a> {
     pub spawn: &'a dyn Fn(&Path) -> io::Result<()>,
     /// Resolve the GTA settings target files (real: `gta_settings_targets`).
     pub gta_targets: &'a dyn Fn(Option<&str>) -> Vec<PathBuf>,
+    /// Resolve external repair sources for the applied settings — the user's
+    /// authoritative GTA settings plus the OS-detected GPU (real:
+    /// `gta_settings::resolve_external_repair_sources`). These do real file/OS
+    /// I/O, so they are injected to keep the launch pipeline testable.
+    pub gta_repair_sources: &'a dyn Fn(Option<&str>) -> Vec<gta_settings::GtaSettingsDocument>,
     /// Resolve the real CitizenFX.ini path (real: `paths::citizen_fx_ini_path`).
     pub citizen_fx_ini: &'a dyn Fn() -> Option<PathBuf>,
 }
@@ -159,7 +164,15 @@ pub fn launch_client(
     // 4. GTA settings — FiveM reads from BOTH CitizenFX AppData AND FiveM.app.
     if link.gta_settings {
         let targets = (deps.gta_targets)(game_path_override.as_deref());
-        let plan = gta_settings::apply_gta_settings(&client_path, targets, &backups_dir, status)?;
+        let external = (deps.gta_repair_sources)(game_path_override.as_deref());
+        let external_refs: Vec<&gta_settings::GtaSettingsDocument> = external.iter().collect();
+        let plan = gta_settings::apply_gta_settings(
+            &client_path,
+            targets,
+            &backups_dir,
+            &external_refs,
+            status,
+        )?;
         // Enforcement only when we're allowed background processes.
         if !is_junction_plugins_mode {
             outcome.gta_enforcement = Some(plan);
@@ -255,6 +268,7 @@ mod tests {
                     Ok(())
                 },
                 gta_targets: &|_| Vec::new(),
+                gta_repair_sources: &|_| Vec::new(),
                 citizen_fx_ini: &|| None,
             }
         }};
@@ -392,6 +406,7 @@ mod tests {
                 Ok(())
             },
             gta_targets: &move |_| targets.clone(),
+            gta_repair_sources: &|_| Vec::new(),
             citizen_fx_ini: &move || Some(ini.clone()),
         };
 
@@ -454,6 +469,7 @@ mod tests {
                 Ok(())
             },
             gta_targets: &move |_| targets.clone(),
+            gta_repair_sources: &|_| Vec::new(),
             citizen_fx_ini: &move || Some(ini.clone()),
         };
 
@@ -492,6 +508,7 @@ mod tests {
                 Ok(())
             },
             gta_targets: &|_| Vec::new(),
+            gta_repair_sources: &|_| Vec::new(),
             citizen_fx_ini: &|| None,
         };
 
@@ -516,6 +533,7 @@ mod tests {
             is_game_running: &|| false,
             spawn: &|_| Ok(()),
             gta_targets: &|_| Vec::new(),
+            gta_repair_sources: &|_| Vec::new(),
             citizen_fx_ini: &|| None,
         };
 

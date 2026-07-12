@@ -86,29 +86,18 @@ pub fn gta_settings_path() -> Option<PathBuf> {
 }
 
 /// All locations FiveM/GTA may read settings XML from, in priority order.
-/// Mirrors v1 `getGtaSettingsCandidates()`.
+///
+/// The **authoritative** source is `Documents\Rockstar Games\GTA V\settings.xml`
+/// — the file GTA V itself writes and the only one guaranteed to carry the full
+/// graphics config *and* `<VideoCardDescription>` (the detected GPU name). GTA
+/// compares that GPU name against the hardware it finds at boot; if it is
+/// missing or doesn't match, the game throws the graphics settings away and
+/// re-runs auto-detection. So this file (and its OneDrive-redirected twin) is
+/// checked BEFORE the CitizenFX/FiveM copies, which are often sparser or stale.
 pub fn gta_settings_candidates(game_path_override: Option<&str>) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    if let Some(roaming) = std::env::var_os("APPDATA") {
-        candidates.push(
-            PathBuf::from(roaming)
-                .join("CitizenFX")
-                .join("gta5_settings.xml"),
-        );
-    }
-
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let local = PathBuf::from(local);
-        candidates.push(local.join("CitizenFX").join("gta5_settings.xml"));
-        candidates.push(
-            local
-                .join("FiveM")
-                .join("FiveM.app")
-                .join("settings.xml"),
-        );
-    }
-
+    // Authoritative: the real GTA V settings the game writes (with the GPU).
     if let Some(profile) = std::env::var_os("USERPROFILE") {
         candidates.push(
             PathBuf::from(profile)
@@ -125,6 +114,26 @@ pub fn gta_settings_candidates(game_path_override: Option<&str>) -> Vec<PathBuf>
                 .join("Documents")
                 .join("Rockstar Games")
                 .join("GTA V")
+                .join("settings.xml"),
+        );
+    }
+
+    // FiveM / CitizenFX copies (fallbacks if the real file isn't present).
+    if let Some(roaming) = std::env::var_os("APPDATA") {
+        candidates.push(
+            PathBuf::from(roaming)
+                .join("CitizenFX")
+                .join("gta5_settings.xml"),
+        );
+    }
+
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let local = PathBuf::from(local);
+        candidates.push(local.join("CitizenFX").join("gta5_settings.xml"));
+        candidates.push(
+            local
+                .join("FiveM")
+                .join("FiveM.app")
                 .join("settings.xml"),
         );
     }

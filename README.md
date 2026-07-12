@@ -60,7 +60,7 @@ From then on, switching setups is: pick a client, hit launch.
 - **Central backup store**: anything moved aside lands in `%APPDATA%\FiveLaunch\backups\`, browsable and restorable from the History dialog.
 - **ReShade sync**: discovers your ReShade config, presets, and logs, keeps client-owned copies, and syncs them for the active client.
 - **Quick launch** from the UI with live progress, or from a **desktop shortcut** (`FiveLaunch.exe --launch-client=<id>`), which is single-instance safe.
-- **GTA V settings editor** with categorized, human-readable controls instead of raw XML.
+- **GTA V settings editor** with categorized, human-readable controls instead of raw XML. **Import from game** reads your real `Documents\Rockstar Games\GTA V\settings.xml`, and every saved/applied file keeps your GPU name (`VideoCardDescription`) — pulled from your real settings, or auto-detected from your hardware (preferring the discrete GPU) when none exists yet — so GTA actually applies the graphics instead of re-detecting and resetting them.
 - **Minimize to tray** while you play, with automatic restore when the game exits.
 - **In-app updates** via the Tauri updater, sourced from signed GitHub releases.
 - **Open a client's folder** straight from the app, and **custom window controls** (minimize / maximize / close).
