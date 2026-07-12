@@ -26,6 +26,8 @@
   let error = $state<string | null>(null)
   let savedFlash = $state(false)
   let search = $state('')
+  /** Values the backend had to fix during the last save (invalid/missing). */
+  let repairNotes = $state<string[]>([])
 
   $effect(() => {
     if (!open || !clientId) return
@@ -37,6 +39,7 @@
     error = null
     dirty = false
     search = ''
+    repairNotes = []
     try {
       doc = await api.getClientGtaSettings(id)
     } catch (e) {
@@ -91,7 +94,12 @@
   async function save(): Promise<void> {
     if (!clientId) return
     try {
-      await api.saveClientGtaSettings(clientId, $state.snapshot(doc))
+      const result = await api.saveClientGtaSettings(clientId, $state.snapshot(doc))
+      // Reflect exactly what was written to disk (validated + repaired).
+      if (result?.document) {
+        doc = result.document
+        repairNotes = result.repairs ?? []
+      }
       dirty = false
       savedFlash = true
       setTimeout(() => (savedFlash = false), 1200)
@@ -104,6 +112,7 @@
     if (!clientId) return
     loading = true
     error = null
+    repairNotes = []
     try {
       doc = await api.importGtaSettingsFromDocuments(clientId)
       dirty = false
@@ -118,6 +127,7 @@
     if (!clientId) return
     loading = true
     error = null
+    repairNotes = []
     try {
       doc = await api.importGtaSettingsFromTemplate(clientId)
       dirty = false
@@ -158,6 +168,21 @@
 
     {#if error}
       <div class="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">{error}</div>
+    {/if}
+
+    {#if repairNotes.length > 0}
+      <div class="rounded-md border border-primary/40 bg-primary/10 p-3 text-sm">
+        <p class="font-medium">
+          {repairNotes.length === 1
+            ? 'One value was fixed while saving:'
+            : `${repairNotes.length} values were fixed while saving:`}
+        </p>
+        <ul class="mt-1.5 list-disc space-y-0.5 pl-5 text-xs text-muted-foreground">
+          {#each repairNotes as note (note)}
+            <li>{note}</li>
+          {/each}
+        </ul>
+      </div>
     {/if}
 
     {#if !loading}

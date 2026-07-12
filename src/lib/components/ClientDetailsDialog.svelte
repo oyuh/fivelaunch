@@ -3,6 +3,7 @@
   import Button from './ui/Button.svelte'
   import Input from './ui/Input.svelte'
   import Icon from './ui/Icon.svelte'
+  import Switch from './ui/Switch.svelte'
   import SegmentedControl from './ui/SegmentedControl.svelte'
   import { tooltip } from '../actions/tooltip'
   import { api } from '../api'
@@ -12,15 +13,27 @@
   const PURE_MODE_HELP =
     'FiveM pure mode makes your client match the server exactly, blocking client-side mods so you can join anti-cheat / pure servers without the in-launch prompt. Level 1 is strict (files must match). Level 2 is more lenient (allows some textures/sounds). Off launches normally.'
 
+  const RESTORE_HELP =
+    'When the game closes, everything this client swapped in (mods, plugins, citizen, GTA settings, CitizenFX.ini) goes back to your snapshot ("My Setup").'
+
   let {
     open = $bindable(false),
     client,
     stats,
+    hasSnapshot = false,
+    restoreEnabled = false,
+    onRestoreToggle,
     onChanged
   }: {
     open?: boolean
     client: ClientProfile | null
     stats: ClientStats | null
+    /** Whether a snapshot client exists (restore-on-close requires one). */
+    hasSnapshot?: boolean
+    /** Current restore-on-close state for this client. */
+    restoreEnabled?: boolean
+    /** Toggle restore-on-close (App owns the confirm-before-off flow). */
+    onRestoreToggle?: (value: boolean) => void
     /** Called after rename so App can refresh. */
     onChanged: () => void
   } = $props()
@@ -154,6 +167,32 @@
             { value: '1', label: 'Level 1' },
             { value: '2', label: 'Level 2' }
           ]}
+        />
+      </div>
+
+      <div class="flex items-center justify-between gap-3 rounded-lg bg-surface-2/60 p-4">
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="text-sm font-medium">Restore my setup on close</span>
+            <span class="cursor-help text-muted-foreground" use:tooltip={RESTORE_HELP}>
+              <Icon name="info" size={14} />
+            </span>
+          </div>
+          <p class="mt-0.5 text-xs text-muted-foreground">
+            {#if !hasSnapshot}
+              No snapshot yet — create one in global settings to enable this.
+            {:else if restoreEnabled}
+              After you close the game, FiveM goes back to your snapshot.
+            {:else}
+              Off: this client's files stay in FiveM after the game closes.
+            {/if}
+          </p>
+        </div>
+        <Switch
+          label="Restore my setup on close"
+          checked={hasSnapshot ? restoreEnabled : false}
+          disabled={!hasSnapshot}
+          onchange={(v) => onRestoreToggle?.(v)}
         />
       </div>
 

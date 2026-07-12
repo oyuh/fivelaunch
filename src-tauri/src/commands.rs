@@ -6,7 +6,7 @@ use tauri::{Manager, State};
 
 use crate::core::clients::{ClientProfile, ClientStore, DuplicateOptions, LinkOptions, PluginsMode};
 use crate::core::file_sync::BackgroundTask;
-use crate::core::gta_settings::GtaSettingsDocument;
+use crate::core::gta_settings::{GtaSettingsDocument, GtaSettingsSaveResult};
 use crate::core::log_store::{AppLogEntry, LogStore};
 use crate::core::paths::{self, AppPaths};
 use crate::core::plugins_sync::RuntimeSyncHandle;
@@ -1021,8 +1021,18 @@ pub fn save_client_gta_settings(
     state: State<'_, AppState>,
     id: String,
     doc: GtaSettingsDocument,
-) -> Result<(), String> {
-    crate::core::gta_settings::save_client_settings(&state.paths.clients_data(), &id, &doc)
+) -> Result<GtaSettingsSaveResult, String> {
+    // Prefer the user's current live game settings when repairing gaps —
+    // the template is only the last resort.
+    let live = crate::core::gta_settings::load_live_settings_document(
+        state.game_path_override().as_deref(),
+    );
+    crate::core::gta_settings::save_client_settings(
+        &state.paths.clients_data(),
+        &id,
+        &doc,
+        live.as_ref(),
+    )
 }
 
 #[tauri::command(async)]

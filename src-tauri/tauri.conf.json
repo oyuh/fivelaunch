@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "FiveLaunch",
-  "version": "2.5.32",
+  "version": "2.6.1",
   "identifier": "com.lawsonhart.fivelaunch",
   "build": {
     "frontendDist": "../dist",
@@ -14,10 +14,11 @@
       {
         "label": "main",
         "title": "FiveLaunch",
-        "width": 1156,
-        "height": 907,
+        "width": 1213,
+        "height": 818,
         "minWidth": 900,
         "minHeight": 600,
+        "center": true,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,

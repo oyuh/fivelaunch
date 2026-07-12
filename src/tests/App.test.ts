@@ -105,8 +105,9 @@ function setupFakeBackend(): void {
       case 'set_game_path':
       case 'set_theme_primary_hex':
       case 'set_minimize_to_tray_on_game_launch':
-      case 'save_client_gta_settings':
         return null
+      case 'save_client_gta_settings':
+        return { document: args.doc, repairs: [] }
       case 'list_client_mods':
         return ['gfx_pack/', 'sound.rpf']
       case 'get_update_status':
@@ -252,17 +253,16 @@ describe('App shell', () => {
     render(App)
     await fireEvent.click(await screen.findByText('Main RP'))
 
-    // Mods switch: on -> off.
-    await fireEvent.click(await screen.findByRole('switch', { name: 'Mods' }))
+    // Mods tile: on -> off.
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mods' }))
     await waitFor(() => {
       const call = called('update_client_links').at(-1)
       expect(call?.args.id).toBe('id-main')
       expect((call?.args.linkOptions as { mods: boolean }).mods).toBe(false)
     })
 
-    // Plugins dropdown: Sync -> Junction.
-    await fireEvent.click(await screen.findByRole('button', { name: /Sync \(copy\)/ }))
-    await fireEvent.click(await screen.findByRole('button', { name: /Junction/ }))
+    // Plugins mode picker: Sync -> Junction (large segmented control).
+    await fireEvent.click(await screen.findByRole('button', { name: 'Junction' }))
     await waitFor(() => {
       const opts = called('update_client_links').at(-1)?.args.linkOptions as {
         plugins: boolean
@@ -314,7 +314,9 @@ describe('App shell', () => {
   it('edits and saves GTA settings through the editor', async () => {
     render(App)
     await fireEvent.click(await screen.findByText('Main RP'))
-    await fireEvent.click(await screen.findByRole('button', { name: 'GTA settings' }))
+    // "GTA settings" names both a linking tile and the editor button — the
+    // editor button is the last one (bottom action row renders after the tiles).
+    await fireEvent.click((await screen.findAllByRole('button', { name: 'GTA settings' })).at(-1)!)
 
     // Loads the client's document.
     await waitFor(() => {
@@ -344,7 +346,7 @@ describe('App shell', () => {
   it('shows client details with the mods list', async () => {
     render(App)
     await fireEvent.click(await screen.findByText('Main RP'))
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Client details' }))
 
     await waitFor(() => {
       expect(called('list_client_mods').at(-1)?.args.id).toBe('id-main')
@@ -366,7 +368,7 @@ describe('App shell', () => {
   it('creates a desktop shortcut from client details', async () => {
     render(App)
     await fireEvent.click(await screen.findByText('Main RP'))
-    await fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Client details' }))
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Create desktop shortcut' }))
     await waitFor(() => {

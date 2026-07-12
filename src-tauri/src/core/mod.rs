@@ -9,6 +9,7 @@ pub mod backups;
 pub mod clients;
 pub mod file_sync;
 pub mod fs_retry;
+pub mod gta_schema;
 pub mod gta_settings;
 pub mod hash;
 pub mod launch;

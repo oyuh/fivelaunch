@@ -8,6 +8,7 @@ import type {
   DuplicateOptions,
   GameBusyState,
   GtaSettingsDocument,
+  GtaSettingsSaveResult,
   LinkOptions,
   UpdateStatus
 } from './types'
@@ -99,7 +100,7 @@ export const api = {
   getClientGtaSettings: (id: string) =>
     invoke<GtaSettingsDocument>('get_client_gta_settings', { id }),
   saveClientGtaSettings: (id: string, doc: GtaSettingsDocument) =>
-    invoke<void>('save_client_gta_settings', { id, doc }),
+    invoke<GtaSettingsSaveResult>('save_client_gta_settings', { id, doc }),
   importGtaSettingsFromDocuments: (id: string) =>
     invoke<GtaSettingsDocument>('import_gta_settings_from_documents', { id }),
   importGtaSettingsFromTemplate: (id: string) =>

@@ -102,3 +102,10 @@ export interface GtaSettingsDocument {
   rootName: string
   items: GtaSettingsItem[]
 }
+
+/** Result of a validated save: the canonical document as written to disk,
+ * plus notes for any values the backend had to repair. */
+export interface GtaSettingsSaveResult {
+  document: GtaSettingsDocument
+  repairs: string[]
+}

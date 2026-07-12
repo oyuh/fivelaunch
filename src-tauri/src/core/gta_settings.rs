@@ -168,7 +168,8 @@ fn walk_node(node: &ParsedNode, path_parts: &[String], items: &mut Vec<GtaSettin
 
 /// XML -> document. Empty/invalid input yields the empty default (v1 behavior).
 pub fn parse_xml_to_document(xml: &str) -> GtaSettingsDocument {
-    let trimmed = xml.trim();
+    // Strip a UTF-8 BOM some editors add — it would otherwise fail parsing.
+    let trimmed = xml.trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
         return GtaSettingsDocument::default();
     }
@@ -341,17 +342,85 @@ pub fn get_client_settings(clients_data: &Path, client_id: &str) -> GtaSettingsD
     parse_xml_to_document(&xml)
 }
 
+/// What a validated save produced: the canonical document as written to disk
+/// (post-repair, so the UI can re-render exactly what was saved) plus notes
+/// for every value that had to be fixed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GtaSettingsSaveResult {
+    pub document: GtaSettingsDocument,
+    pub repairs: Vec<String>,
+}
+
+/// Parse the live game's current settings file (first real-looking target),
+/// used as the preferred fallback source when repairing documents.
+pub fn load_live_settings_document(game_path_override: Option<&str>) -> Option<GtaSettingsDocument> {
+    gta_settings_targets(game_path_override)
+        .iter()
+        .find(|t| looks_like_gta_settings_xml(t))
+        .and_then(|t| fs::read_to_string(t).ok())
+        .map(|xml| parse_xml_to_document(&xml))
+}
+
+/// Validate + repair `doc` against the schema, then atomically write the
+/// canonical XML. `live` (the game's current settings, when available) is
+/// preferred over the embedded template for filling missing/invalid values.
 pub fn save_client_settings(
     clients_data: &Path,
     client_id: &str,
     doc: &GtaSettingsDocument,
-) -> Result<(), String> {
-    let path = client_settings_path_for_write(clients_data, client_id);
-    let xml = build_xml_from_document(doc);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    live: Option<&GtaSettingsDocument>,
+) -> Result<GtaSettingsSaveResult, String> {
+    let template = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
+    let mut fallbacks: Vec<&GtaSettingsDocument> = Vec::new();
+    if let Some(live) = live {
+        fallbacks.push(live);
     }
-    fs::write(path, xml).map_err(|e| e.to_string())
+    fallbacks.push(&template);
+
+    let outcome = super::gta_schema::repair_document(doc, &fallbacks);
+    let xml = build_xml_from_document(&outcome.document);
+
+    let path = client_settings_path_for_write(clients_data, client_id);
+    atomic_write(&path, xml.as_bytes())?;
+
+    Ok(GtaSettingsSaveResult {
+        // Re-parse the built XML so the returned document matches the file
+        // exactly (configSource injected, order canonicalized).
+        document: parse_xml_to_document(&xml),
+        repairs: outcome.repairs,
+    })
+}
+
+/// Write `bytes` to `path` atomically: temp sibling + fsync + rename. The
+/// old delete-then-copy left a window where a crash produced NO settings
+/// file at all — which makes the game regenerate defaults.
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("No parent directory for {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+
+    let mut tmp_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "settings".into());
+    tmp_name.push_str(".fivelaunch-tmp");
+    let tmp = parent.join(tmp_name);
+
+    {
+        use std::io::Write;
+        let mut file = fs::File::create(&tmp)
+            .map_err(|e| format!("Could not create {}: {e}", tmp.display()))?;
+        file.write_all(bytes)
+            .map_err(|e| format!("Could not write {}: {e}", tmp.display()))?;
+        let _ = file.sync_all();
+    }
+
+    fs::rename(&tmp, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("Could not replace {}: {e}", path.display())
+    })
 }
 
 pub fn import_from_documents(
@@ -373,8 +442,13 @@ pub fn import_from_documents(
 
     let xml = fs::read_to_string(source).map_err(|e| e.to_string())?;
     let doc = parse_xml_to_document(&xml);
-    save_client_settings(clients_data, client_id, &doc)?;
-    Ok(doc)
+    if doc.items.is_empty() {
+        return Err(format!(
+            "Could not read GTA settings from {} — the file is not valid settings XML.",
+            source.display()
+        ));
+    }
+    Ok(save_client_settings(clients_data, client_id, &doc, None)?.document)
 }
 
 pub fn import_from_template(
@@ -382,15 +456,16 @@ pub fn import_from_template(
     client_id: &str,
 ) -> Result<GtaSettingsDocument, String> {
     let doc = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
-    save_client_settings(clients_data, client_id, &doc)?;
-    Ok(doc)
+    Ok(save_client_settings(clients_data, client_id, &doc, None)?.document)
 }
 
 // ---------------------------------------------------------------------------
 // Launch-time apply + enforcement
 // ---------------------------------------------------------------------------
 
-/// v1 `looksLikeGtaSettingsXml`: real settings XML, not an empty placeholder.
+/// v1 `looksLikeGtaSettingsXml`, hardened: real settings XML, not an empty
+/// placeholder — and not a TRUNCATED file (missing `</Settings>` closing tag
+/// means a partial write; the game would discard it and reset to defaults).
 pub fn looks_like_gta_settings_xml(path: &Path) -> bool {
     let Ok(meta) = fs::metadata(path) else {
         return false;
@@ -398,16 +473,23 @@ pub fn looks_like_gta_settings_xml(path: &Path) -> bool {
     if !meta.is_file() || meta.len() < 32 {
         return false;
     }
-    let Ok(head) = fs::read_to_string(path) else {
+    let Ok(content) = fs::read_to_string(path) else {
         return false;
     };
-    head.chars().take(2048).collect::<String>().contains("<Settings")
+    content.contains("<Settings") && content.contains("</Settings>")
 }
 
 /// Ensure a real per-client settings file exists; returns its path.
 /// Preference: existing gta5_settings.xml -> legacy settings.xml migration ->
-/// embedded template -> minimal fallback.
-pub fn ensure_client_gta_settings_file(client_path: &Path) -> Result<PathBuf, String> {
+/// the user's CURRENT live game settings -> embedded template.
+///
+/// Adopting the live file (new in v2) matters: a client whose settings were
+/// never configured used to get the hardcoded template applied over the
+/// user's real settings — the classic "the launcher reset my settings" report.
+pub fn ensure_client_gta_settings_file(
+    client_path: &Path,
+    live_sources: &[PathBuf],
+) -> Result<PathBuf, String> {
     let settings_dir = client_path.join("settings");
     let target = settings_dir.join("gta5_settings.xml");
     let legacy = settings_dir.join("settings.xml");
@@ -421,6 +503,12 @@ pub fn ensure_client_gta_settings_file(client_path: &Path) -> Result<PathBuf, St
     if looks_like_gta_settings_xml(&legacy) {
         fs::copy(&legacy, &target).map_err(|e| e.to_string())?;
         return Ok(target);
+    }
+
+    if let Some(live) = live_sources.iter().find(|p| looks_like_gta_settings_xml(p)) {
+        if fs::copy(live, &target).is_ok() {
+            return Ok(target);
+        }
     }
 
     fs::write(&target, SETTINGS_TEMPLATE_XML).map_err(|e| e.to_string())?;
@@ -451,18 +539,19 @@ pub fn gta_settings_targets(game_path_override: Option<&str>) -> Vec<PathBuf> {
     targets
 }
 
-/// v1 `replaceFile` semantics, but the pre-overwrite backup goes to the
-/// central store instead of a `.backup` sibling.
+/// v1 `replaceFile` semantics, hardened: the pre-overwrite backup goes to the
+/// central store, the write is ATOMIC (temp + rename — never a moment with no
+/// file on disk), and the result is verified by reading it back.
 fn replace_file(source: &Path, target: &Path, backups_dir: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Err(format!(
+    let desired = fs::read(source).map_err(|_| {
+        format!(
             "Settings file not found: {}. Please save settings first.",
             source.display()
-        ));
-    }
+        )
+    })?;
 
     if target.exists() {
-        // Clear read-only best-effort so the delete/copy can't be blocked.
+        // Clear read-only best-effort so the rename-over can't be blocked.
         if let Ok(meta) = fs::metadata(target) {
             let mut perms = meta.permissions();
             #[allow(clippy::permissions_set_readonly_false)]
@@ -474,16 +563,19 @@ fn replace_file(source: &Path, target: &Path, backups_dir: &Path) -> Result<(), 
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "settings".into());
         let _ = super::backups::copy_into_backups(backups_dir, target, &kind);
-        let _ = fs::remove_file(target);
     }
 
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    fs::copy(source, target).map_err(|e| e.to_string())?;
+    atomic_write(target, &desired)?;
 
-    if let Ok(f) = fs::OpenOptions::new().write(true).open(target) {
-        let _ = f.sync_all();
+    // Trust nothing: confirm the game will actually see the bytes we applied.
+    let written = fs::read(target).map_err(|e| {
+        format!("Could not verify {} after writing: {e}", target.display())
+    })?;
+    if written != desired {
+        return Err(format!(
+            "Verification failed: {} does not match the applied settings.",
+            target.display()
+        ));
     }
     Ok(())
 }
@@ -497,6 +589,11 @@ pub struct GtaEnforcementPlan {
 /// Apply the client's settings to every target (originals preserved in the
 /// central backup store) and neutralize `fivem_sdk.cfg`. Returns the
 /// enforcement plan to run after the game spawns.
+///
+/// The client's file is never copied blind: it is parsed, validated against
+/// the schema, and repaired (missing/invalid values filled from the CURRENT
+/// live game file first, then the template) so the game always receives a
+/// complete document it will accept instead of resetting to defaults.
 pub fn apply_gta_settings(
     client_path: &Path,
     targets: Vec<PathBuf>,
@@ -504,7 +601,42 @@ pub fn apply_gta_settings(
     status: &mut dyn FnMut(&str),
 ) -> Result<GtaEnforcementPlan, String> {
     status("Applying GTA settings...");
-    let source = ensure_client_gta_settings_file(client_path)?;
+    let source = ensure_client_gta_settings_file(client_path, &targets)?;
+
+    // Validate + repair the client document before it touches the game.
+    let raw = fs::read_to_string(&source)
+        .map_err(|e| format!("Could not read {}: {e}", source.display()))?;
+    let client_doc = parse_xml_to_document(&raw);
+
+    let live_doc = targets
+        .iter()
+        .find(|t| looks_like_gta_settings_xml(t))
+        .and_then(|t| fs::read_to_string(t).ok())
+        .map(|xml| parse_xml_to_document(&xml));
+    let template_doc = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
+    let mut fallbacks: Vec<&GtaSettingsDocument> = Vec::new();
+    if let Some(doc) = &live_doc {
+        fallbacks.push(doc);
+    }
+    fallbacks.push(&template_doc);
+
+    let outcome = super::gta_schema::repair_document(&client_doc, &fallbacks);
+    if !outcome.repairs.is_empty() {
+        status(&format!(
+            "Repaired {} GTA settings issue(s) before applying",
+            outcome.repairs.len()
+        ));
+        for repair in &outcome.repairs {
+            log::warn!("GTA settings repair: {repair}");
+        }
+    }
+
+    // Persist the canonical bytes back to the client file so the applied
+    // targets, the enforcement loop, and the saved client all agree exactly.
+    let xml = build_xml_from_document(&outcome.document);
+    if xml.as_bytes() != raw.as_bytes() {
+        atomic_write(&source, xml.as_bytes())?;
+    }
 
     // fivem_sdk.cfg carries profile console variables that override the XML —
     // move it into the store rather than leaving a .backup_<ts> sibling.
@@ -712,6 +844,15 @@ mod tests {
         let real = dir.path().join("real.xml");
         fs::write(&real, SETTINGS_TEMPLATE_XML).unwrap();
         assert!(looks_like_gta_settings_xml(&real));
+
+        // Truncated file (partial write): opening tag but no closing tag.
+        let truncated = dir.path().join("truncated.xml");
+        let cut = &SETTINGS_TEMPLATE_XML[..SETTINGS_TEMPLATE_XML.len() / 2];
+        fs::write(&truncated, cut).unwrap();
+        assert!(
+            !looks_like_gta_settings_xml(&truncated),
+            "truncated XML must be treated as invalid"
+        );
     }
 
     #[test]
@@ -720,7 +861,7 @@ mod tests {
         let client = dir.path().join("client");
 
         // Nothing exists -> template.
-        let path = ensure_client_gta_settings_file(&client).unwrap();
+        let path = ensure_client_gta_settings_file(&client, &[]).unwrap();
         assert!(looks_like_gta_settings_xml(&path));
         assert_eq!(fs::read_to_string(&path).unwrap(), SETTINGS_TEMPLATE_XML);
 
@@ -732,9 +873,26 @@ mod tests {
         let legacy_xml = SETTINGS_TEMPLATE_XML.replace("value=\"27\"", "value=\"26\"");
         fs::write(settings2.join("settings.xml"), &legacy_xml).unwrap();
 
-        let path2 = ensure_client_gta_settings_file(&client2).unwrap();
+        let path2 = ensure_client_gta_settings_file(&client2, &[]).unwrap();
         assert!(path2.ends_with("gta5_settings.xml"));
         assert_eq!(fs::read_to_string(&path2).unwrap(), legacy_xml);
+    }
+
+    #[test]
+    fn ensure_client_file_adopts_live_settings_over_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("client");
+        let live = dir.path().join("roaming").join("gta5_settings.xml");
+        fs::create_dir_all(live.parent().unwrap()).unwrap();
+        let live_xml = SETTINGS_TEMPLATE_XML.replace("value=\"2560\"", "value=\"1920\"");
+        fs::write(&live, &live_xml).unwrap();
+
+        let path = ensure_client_gta_settings_file(&client, &[live]).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            live_xml,
+            "an unconfigured client must inherit the user's live settings, not the template"
+        );
     }
 
     #[test]
@@ -744,7 +902,8 @@ mod tests {
         fs::create_dir_all(clients_data.join("abc")).unwrap();
 
         let doc = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
-        save_client_settings(&clients_data, "abc", &doc).unwrap();
+        let result = save_client_settings(&clients_data, "abc", &doc, None).unwrap();
+        assert!(result.repairs.is_empty(), "template must save clean: {:?}", result.repairs);
 
         let loaded = get_client_settings(&clients_data, "abc");
         let width = loaded
@@ -753,6 +912,33 @@ mod tests {
             .find(|i| i.path == "Settings/video/ScreenWidth")
             .unwrap();
         assert_eq!(width.attributes.get("value").map(String::as_str), Some("2560"));
+        // Returned document mirrors the file exactly.
+        assert_eq!(result.document, loaded);
+    }
+
+    #[test]
+    fn save_repairs_invalid_values_and_reports_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let clients_data = dir.path().join("clients");
+        fs::create_dir_all(clients_data.join("abc")).unwrap();
+
+        let mut doc = parse_xml_to_document(SETTINGS_TEMPLATE_XML);
+        for item in &mut doc.items {
+            if item.path == "Settings/graphics/MSAA" {
+                item.attributes.insert("value".into(), "999".into());
+            }
+        }
+
+        let result = save_client_settings(&clients_data, "abc", &doc, None).unwrap();
+        assert!(!result.repairs.is_empty());
+
+        let loaded = get_client_settings(&clients_data, "abc");
+        let msaa = loaded
+            .items
+            .iter()
+            .find(|i| i.path == "Settings/graphics/MSAA")
+            .unwrap();
+        assert_eq!(msaa.attributes.get("value").map(String::as_str), Some("0"));
     }
 
     #[test]
@@ -788,6 +974,67 @@ mod tests {
             fs::read_to_string(&entries[0].path).unwrap(),
             "old-content-that-should-be-backed-up"
         );
+    }
+
+    #[test]
+    fn apply_repairs_sparse_client_file_from_live_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("client");
+        let store = dir.path().join("backups");
+        let target = dir.path().join("roaming").join("gta5_settings.xml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+
+        // Live game file: real, with a distinctive resolution.
+        let live_xml = SETTINGS_TEMPLATE_XML
+            .replace("value=\"2560\"", "value=\"1920\"")
+            .replace("value=\"1440\"", "value=\"1080\"");
+        fs::write(&target, &live_xml).unwrap();
+
+        // Client file: valid XML but sparse (only MSAA) + one invalid value.
+        let settings_dir = client.join("settings");
+        fs::create_dir_all(&settings_dir).unwrap();
+        fs::write(
+            settings_dir.join("gta5_settings.xml"),
+            "<?xml version=\"1.0\"?>\n<Settings>\n  <graphics>\n    <MSAA value=\"4\"/>\n    <DoF value=\"maybe\"/>\n  </graphics>\n</Settings>\n",
+        )
+        .unwrap();
+
+        let mut statuses = Vec::new();
+        apply_gta_settings(&client, vec![target.clone()], &store, &mut |s| {
+            statuses.push(s.to_string())
+        })
+        .unwrap();
+
+        let applied = parse_xml_to_document(&fs::read_to_string(&target).unwrap());
+        let value = |path: &str| {
+            applied
+                .items
+                .iter()
+                .find(|i| i.path == path)
+                .and_then(|i| i.attributes.get("value"))
+                .cloned()
+                .unwrap_or_default()
+        };
+        // Client's valid choice kept.
+        assert_eq!(value("Settings/graphics/MSAA"), "4");
+        // Invalid bool replaced (template/live default).
+        assert_eq!(value("Settings/graphics/DoF"), "false");
+        // Missing video settings filled from the LIVE file, not the template.
+        assert_eq!(value("Settings/video/ScreenWidth"), "1920");
+        assert_eq!(value("Settings/video/ScreenHeight"), "1080");
+        // Structurally complete: version + configSource present.
+        assert_eq!(value("Settings/version"), "27");
+        assert!(applied
+            .items
+            .iter()
+            .any(|i| i.path == "Settings/configSource"
+                && i.attributes.get("#text").map(String::as_str) == Some("SMC_USER")));
+        // Repair was reported to the user.
+        assert!(statuses.iter().any(|s| s.contains("Repaired")));
+        // The client's own file was canonicalized to the same content.
+        let client_file =
+            fs::read_to_string(client.join("settings").join("gta5_settings.xml")).unwrap();
+        assert_eq!(parse_xml_to_document(&client_file), applied);
     }
 
     #[test]

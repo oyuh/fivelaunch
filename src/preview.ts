@@ -96,7 +96,7 @@ let backups: Array<Record<string, unknown>> = [
 
 // Version shown throughout the preview. Defaults to a recent release and is
 // updated to the real latest GitHub release tag in boot() before mounting.
-let appVersion = '2.5.32'
+let appVersion = '2.6.1'
 
 const seedLogs: AppLogEntry[] = [
   { id: 1, ts: Date.now() - 61_000, level: 'info', message: `FiveLaunch v${appVersion} started`, source: 'main' },
@@ -280,6 +280,8 @@ mockIPC((cmd, payload) => {
     case 'import_gta_settings_from_documents':
     case 'import_gta_settings_from_template':
       return gtaDoc
+    case 'save_client_gta_settings':
+      return { document: args.doc ?? gtaDoc, repairs: [] }
 
     // Fire-and-forget commands (folders, setters, url, clear, window)
     default:

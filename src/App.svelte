@@ -13,7 +13,6 @@
   import Icon from './lib/components/ui/Icon.svelte'
   import IconButton from './lib/components/ui/IconButton.svelte'
   import Button from './lib/components/ui/Button.svelte'
-  import Switch from './lib/components/ui/Switch.svelte'
   import Menu from './lib/components/ui/Menu.svelte'
   import MenuItem from './lib/components/ui/MenuItem.svelte'
   import ConfirmDialog from './lib/components/ui/ConfirmDialog.svelte'
@@ -155,20 +154,27 @@
   type BoolLink = 'mods' | 'citizen' | 'gtaSettings' | 'citizenFxIni'
   type PluginsState = 'off' | 'sync' | 'junction'
 
-  // Simple on/off linking toggles + their one-line explanations.
-  const boolLinks: { key: BoolLink; label: string; hint: string }[] = [
-    { key: 'mods', label: 'Mods', hint: 'Share this client’s mods folder with the game.' },
-    { key: 'citizen', label: 'Citizen', hint: 'Link the citizen folder (advanced).' },
-    { key: 'gtaSettings', label: 'GTA settings', hint: 'Apply this client’s graphics settings on launch.' },
-    { key: 'citizenFxIni', label: 'CitizenFX.ini', hint: 'Keep this client’s CitizenFX.ini in sync.' }
+  // Simple on/off linking toggles, shown as square tiles.
+  const boolLinks: { key: BoolLink; label: string; hint: string; icon: string }[] = [
+    { key: 'mods', label: 'Mods', hint: 'Share this client’s mods folder with the game.', icon: 'folder' },
+    { key: 'citizen', label: 'Citizen', hint: 'Link the citizen folder (advanced).', icon: 'link' },
+    { key: 'gtaSettings', label: 'GTA settings', hint: 'Apply this client’s graphics settings on launch.', icon: 'sliders' },
+    { key: 'citizenFxIni', label: 'CitizenFX.ini', hint: 'Keep this client’s CitizenFX.ini in sync.', icon: 'settings' }
+  ]
+
+  // Plugins is a mode picker (like pure mode), shown as a large segmented control.
+  const pluginOptions: { value: PluginsState; label: string; hint: string }[] = [
+    { value: 'off', label: 'Off', hint: 'Don’t touch the plugins folder.' },
+    { value: 'sync', label: 'Sync (copy)', hint: 'Copy plugins in, keep them synced while you play.' },
+    { value: 'junction', label: 'Junction', hint: 'Point FiveM’s plugins folder at this client (advanced).' }
   ]
 
   const pluginsState = $derived<PluginsState>(
     !selected?.linkOptions.plugins ? 'off' : (selected.linkOptions.pluginsMode ?? 'sync')
   )
 
-  const pluginsLabel = $derived(
-    pluginsState === 'off' ? 'Off' : pluginsState === 'junction' ? 'Junction' : 'Sync (copy)'
+  const pluginsHint = $derived(
+    pluginOptions.find((o) => o.value === pluginsState)?.hint ?? ''
   )
 
   async function updateLinks(next: ClientProfile['linkOptions']): Promise<void> {
@@ -603,73 +609,15 @@
             <p class="mt-0.5 truncate font-mono text-xs text-muted-foreground">{selected.id}</p>
           </div>
 
-          <div class="flex shrink-0 items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              icon="copy"
-              onclick={() => (duplicateOpen = true)}
+          <div class="flex shrink-0 items-center">
+            <button
+              class="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface-2 text-muted-foreground shadow-btn transition-all hover:-translate-y-px hover:border-white/15 hover:bg-surface-3 hover:text-foreground hover:shadow-btn-hover active:translate-y-0"
+              use:tooltip={'Client details'}
+              aria-label="Client details"
+              onclick={() => (detailsOpen = true)}
             >
-              Duplicate
-            </Button>
-            <Button variant="outline" size="sm" icon="info" onclick={() => (detailsOpen = true)}>
-              Details
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              icon="sliders"
-              onclick={() => (gtaSettingsOpen = true)}
-            >
-              GTA settings
-            </Button>
-            <Menu align="end" width="w-56">
-              {#snippet trigger({ toggle })}
-                <Button variant="outline" size="sm" icon="folder" onclick={toggle}>Folders</Button>
-              {/snippet}
-              {#snippet children({ close })}
-                <MenuItem
-                  icon="folder"
-                  label="Client folder"
-                  onclick={() => {
-                    close()
-                    if (selected) openRef(api.openClientFolder(selected.id))
-                  }}
-                />
-                <MenuItem
-                  icon="folder"
-                  label="Client plugins"
-                  onclick={() => {
-                    close()
-                    if (selected) openRef(api.openClientPluginsFolder(selected.id))
-                  }}
-                />
-                <MenuItem
-                  icon="folderOpen"
-                  label="FiveM folder"
-                  onclick={() => {
-                    close()
-                    openRef(api.openFiveMFolder())
-                  }}
-                />
-                <MenuItem
-                  icon="folderOpen"
-                  label="FiveM plugins"
-                  onclick={() => {
-                    close()
-                    openRef(api.openFiveMPluginsFolder())
-                  }}
-                />
-                <MenuItem
-                  icon="externalLink"
-                  label="CitizenFX folder"
-                  onclick={() => {
-                    close()
-                    openRef(api.openCitizenFxFolder())
-                  }}
-                />
-              {/snippet}
-            </Menu>
+              <Icon name="info" size={24} />
+            </button>
           </div>
         </div>
 
@@ -706,43 +654,8 @@
             </div>
           {/if}
 
-          <!-- Restore on close -->
-          <div
-            class="mt-4 flex items-center gap-3 rounded-lg px-3 py-2.5 {restoreOnCloseEnabled ||
-            !snapshotClientId
-              ? 'bg-surface-2/50'
-              : 'border border-destructive/40 bg-destructive/10'}"
-          >
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1.5">
-                <p class="text-sm font-medium">Restore my setup on close</p>
-                <span
-                  class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
-                  use:tooltip={'When the game closes, everything this client swapped in (mods, plugins, citizen, GTA settings, CitizenFX.ini) goes back to your snapshot ("My Setup").'}
-                >
-                  <Icon name="info" size={12} />
-                </span>
-              </div>
-              <p class="text-xs {!snapshotClientId || restoreOnCloseEnabled ? 'text-muted-foreground' : 'text-destructive'}">
-                {#if !snapshotClientId}
-                  No snapshot yet — create one in global settings to enable this.
-                {:else if restoreOnCloseEnabled}
-                  After you close the game, FiveM goes back to your snapshot.
-                {:else}
-                  Off: this client's files stay in FiveM after the game closes.
-                {/if}
-              </p>
-            </div>
-            <Switch
-              label="Restore my setup on close"
-              checked={snapshotClientId ? restoreOnCloseEnabled : false}
-              disabled={!snapshotClientId}
-              onchange={onRestoreToggle}
-            />
-          </div>
-
           <!-- Linking -->
-          <div class="mt-6">
+          <div class="mt-5">
             <div class="mb-2 flex items-baseline gap-2">
               <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Linking
@@ -750,73 +663,62 @@
               <span class="text-xs text-muted-foreground">· what gets shared with FiveM on launch</span>
             </div>
 
-            <div class="divide-y divide-divider overflow-hidden rounded-lg bg-surface-2/50">
-              <!-- Plugins (has modes) -->
-              <div class="flex items-center gap-3 px-3 py-2.5">
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-medium">Plugins</p>
-                  <p class="text-xs text-muted-foreground">How per-client plugins get into FiveM.</p>
-                </div>
-                <Menu align="end" width="w-64">
-                  {#snippet trigger({ toggle })}
-                    <button
-                      class="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-surface-3"
-                      onclick={toggle}
-                    >
-                      <span
-                        class="h-1.5 w-1.5 rounded-full {pluginsState === 'off'
-                          ? 'bg-muted-foreground'
-                          : 'bg-primary'}"
-                      ></span>
-                      {pluginsLabel}
-                      <Icon name="chevronDown" size={14} class="text-muted-foreground" />
-                    </button>
-                  {/snippet}
-                  {#snippet children({ close })}
-                    <MenuItem
-                      label="Off"
-                      description="Don’t touch the plugins folder."
-                      active={pluginsState === 'off'}
-                      onclick={() => {
-                        close()
-                        setPlugins('off')
-                      }}
-                    />
-                    <MenuItem
-                      label="Sync (copy)"
-                      description="Copy plugins in, keep them synced while playing."
-                      active={pluginsState === 'sync'}
-                      onclick={() => {
-                        close()
-                        setPlugins('sync')
-                      }}
-                    />
-                    <MenuItem
-                      label="Junction"
-                      description="Point FiveM’s plugins folder at this client (advanced)."
-                      active={pluginsState === 'junction'}
-                      onclick={() => {
-                        close()
-                        setPlugins('junction')
-                      }}
-                    />
-                  {/snippet}
-                </Menu>
+            <!-- Plugins: large mode picker (like pure mode) -->
+            <div class="rounded-xl bg-surface-2/50 p-3">
+              <div class="mb-2 flex items-center gap-1.5">
+                <p class="text-sm font-medium">Plugins</p>
+                <span
+                  class="cursor-help text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+                  use:tooltip={'How per-client plugins get into FiveM.'}
+                >
+                  <Icon name="info" size={12} />
+                </span>
               </div>
+              <div class="grid grid-cols-3 gap-1.5 rounded-lg border border-border bg-surface-2 p-1">
+                {#each pluginOptions as opt (opt.value)}
+                  <button
+                    type="button"
+                    class="rounded-md px-3 py-2.5 text-sm font-medium transition-colors
+                      {pluginsState === opt.value
+                      ? 'bg-primary text-primary-foreground shadow-btn'
+                      : 'text-muted-foreground hover:bg-surface-3 hover:text-foreground'}"
+                    onclick={() => setPlugins(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                {/each}
+              </div>
+              <p class="mt-2 text-xs text-muted-foreground">{pluginsHint}</p>
+            </div>
 
-              <!-- Simple on/off toggles -->
+            <!-- The rest: square on/off tiles -->
+            <div class="mt-2.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               {#each boolLinks as link (link.key)}
-                <div class="flex items-center gap-3 px-3 py-2.5">
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium">{link.label}</p>
-                    <p class="text-xs text-muted-foreground">{link.hint}</p>
-                  </div>
-                  <Switch
-                    label={link.label}
-                    checked={selected.linkOptions[link.key]}
-                    onchange={(v) => setLinkBool(link.key, v)}
+                {@const on = selected.linkOptions[link.key]}
+                <button
+                  type="button"
+                  use:tooltip={link.hint}
+                  aria-pressed={on}
+                  aria-label={link.label}
+                  class="group relative flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border p-3 text-center transition-all
+                    {on
+                    ? 'border-primary/60 bg-primary/10 text-foreground shadow-btn'
+                    : 'border-border bg-surface-2/50 text-muted-foreground hover:-translate-y-px hover:border-white/15 hover:bg-surface-3'}"
+                  onclick={() => setLinkBool(link.key, !on)}
+                >
+                  <span
+                    class="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full transition-colors
+                      {on ? 'bg-primary text-primary-foreground' : 'bg-surface-3 text-transparent'}"
+                  >
+                    <Icon name="check" size={11} />
+                  </span>
+                  <Icon
+                    name={link.icon}
+                    size={26}
+                    class={on ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'}
                   />
-                </div>
+                  <span class="text-sm font-medium leading-tight">{link.label}</span>
+                </button>
               {/each}
             </div>
           </div>
@@ -829,10 +731,68 @@
             <StatItem label="Size" value={stats ? formatBytes(stats.totalBytes) : '…'} />
             <StatItem label="Last played" value={formatLastPlayed(selected.lastPlayed)} mono={false} />
           </div>
-          <div class="mt-4">
+          <div class="mt-4 grid grid-cols-4 gap-2">
+            <Button variant="outline" icon="copy" full onclick={() => (duplicateOpen = true)}>
+              Duplicate
+            </Button>
+            <Button variant="outline" icon="sliders" full onclick={() => (gtaSettingsOpen = true)}>
+              GTA settings
+            </Button>
+            <Menu align="end" direction="up" width="w-60" class="block w-full">
+              {#snippet trigger({ toggle })}
+                <Button variant="outline" icon="folder" full onclick={toggle}>Folders</Button>
+              {/snippet}
+              {#snippet children({ close })}
+                <!-- Opens upward; ordered so items read bottom-to-top with the
+                     primary "Client folder" nearest the button. -->
+                <MenuItem
+                  icon="externalLink"
+                  label="CitizenFX folder"
+                  onclick={() => {
+                    close()
+                    openRef(api.openCitizenFxFolder())
+                  }}
+                />
+                <MenuItem
+                  icon="folderOpen"
+                  label="FiveM plugins"
+                  onclick={() => {
+                    close()
+                    openRef(api.openFiveMPluginsFolder())
+                  }}
+                />
+                <MenuItem
+                  icon="folderOpen"
+                  label="FiveM folder"
+                  onclick={() => {
+                    close()
+                    openRef(api.openFiveMFolder())
+                  }}
+                />
+                <div class="my-1 border-t border-divider"></div>
+                <MenuItem
+                  icon="folder"
+                  label="Client plugins"
+                  onclick={() => {
+                    close()
+                    if (selected) openRef(api.openClientPluginsFolder(selected.id))
+                  }}
+                />
+                <MenuItem
+                  icon="folder"
+                  label="Client folder"
+                  prominent
+                  onclick={() => {
+                    close()
+                    if (selected) openRef(api.openClientFolder(selected.id))
+                  }}
+                />
+              {/snippet}
+            </Menu>
             <Button
               variant="destructive"
               icon="trash"
+              full
               onclick={() => (deleteConfirmOpen = true)}
             >
               Delete client
@@ -918,7 +878,15 @@
     onContinue={acknowledgeFirstRun}
     onSnapshotCreated={() => void refreshMeta()}
   />
-  <ClientDetailsDialog bind:open={detailsOpen} client={selected} {stats} onChanged={refresh} />
+  <ClientDetailsDialog
+    bind:open={detailsOpen}
+    client={selected}
+    {stats}
+    hasSnapshot={!!snapshotClientId}
+    restoreEnabled={snapshotClientId ? restoreOnCloseEnabled : false}
+    {onRestoreToggle}
+    onChanged={refresh}
+  />
   <GtaSettingsDialog bind:open={gtaSettingsOpen} clientId={selectedId} />
   <HistoryDialog bind:open={historyOpen} />
   <CreateClientDialog bind:open={createOpen} onCreated={onClientCreated} />
