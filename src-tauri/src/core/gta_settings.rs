@@ -1064,10 +1064,12 @@ mod tests {
         std::thread::sleep(Duration::from_millis(80));
         fs::write(&target, "CLOBBERED BY GAME").unwrap();
 
-        // Enforcement must restore it within a few ticks.
+        // Enforcement must restore it within a few ticks. A read can transiently
+        // fail while the enforcement thread is mid-write (Windows sharing
+        // violation), so treat an Err read as "not yet" and keep polling.
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            if fs::read_to_string(&target).unwrap() == SETTINGS_TEMPLATE_XML {
+            if fs::read_to_string(&target).ok().as_deref() == Some(SETTINGS_TEMPLATE_XML) {
                 break;
             }
             assert!(Instant::now() < deadline, "enforcement did not restore the file");
