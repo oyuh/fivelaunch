@@ -7,6 +7,7 @@
   import {
     getSettingDefinition,
     getSettingHelp,
+    getSettingLabel,
     humanizeKey,
     SETTING_CATEGORIES
   } from '../gtaSettingsMap'
@@ -79,7 +80,11 @@
     for (const [cat, entries] of categorized) {
       const kept = entries.filter(({ item }) => {
         const name = settingNameFor(item)
-        return humanizeKey(name).toLowerCase().includes(q) || name.toLowerCase().includes(q)
+        return (
+          getSettingLabel(name).toLowerCase().includes(q) ||
+          humanizeKey(name).toLowerCase().includes(q) ||
+          name.toLowerCase().includes(q)
+        )
       })
       if (kept.length) out.push([cat, kept])
     }
@@ -212,7 +217,7 @@
                   <div class="space-y-1.5">
                     <div class="flex items-center gap-1.5">
                       <label class="text-xs font-medium text-muted-foreground" for="{item.path}-{attrKey}">
-                        {humanizeKey(name)}
+                        {getSettingLabel(name)}
                       </label>
                       {#if help}
                         <span
@@ -231,6 +236,11 @@
                         {value}
                         onchange={(e) => updateAttribute(index, attrKey, e.currentTarget.value)}
                       >
+                        {#if def.options.every((opt) => opt.value !== value)}
+                          <!-- Preserve values outside the menu's list (hidden
+                               tweaks like -1) instead of showing a blank box. -->
+                          <option {value}>{value} (custom)</option>
+                        {/if}
                         {#each def.options as opt (opt.value)}
                           <option value={opt.value}>{opt.label}</option>
                         {/each}

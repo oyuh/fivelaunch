@@ -98,6 +98,17 @@ pub fn gta_settings_candidates(game_path_override: Option<&str>) -> Vec<PathBuf>
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     // Authoritative: the real GTA V settings the game writes (with the GPU).
+    // Same location for Steam / Rockstar / Epic installs. Resolve Documents
+    // through the Windows known-folder API FIRST — it follows OneDrive and
+    // custom "Documents" redirects that the raw USERPROFILE guess misses.
+    if let Some(docs) = dirs::document_dir() {
+        candidates.push(
+            docs.join("Rockstar Games")
+                .join("GTA V")
+                .join("settings.xml"),
+        );
+    }
+
     if let Some(profile) = std::env::var_os("USERPROFILE") {
         candidates.push(
             PathBuf::from(profile)
@@ -143,7 +154,10 @@ pub fn gta_settings_candidates(game_path_override: Option<&str>) -> Vec<PathBuf>
         candidates.push(app.join("settings.xml"));
     }
 
-    candidates.dedup();
+    // Full dedup (not just adjacent) — the known-folder path often repeats
+    // one of the env-var guesses.
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|p| seen.insert(p.clone()));
     candidates
 }
 

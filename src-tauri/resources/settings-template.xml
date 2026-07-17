@@ -62,7 +62,7 @@
     <RefreshRate value="239"></RefreshRate>
     <Windowed value="2"></Windowed>
     <VSync value="0"></VSync>
-    <Stereo value="false"></Stereo>
+    <Stereo value="0"></Stereo>
     <Convergence value="0.100000"></Convergence>
     <Separation value="1.000000"></Separation>
     <PauseOnFocusLoss value="1"></PauseOnFocusLoss>

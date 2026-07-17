@@ -52,23 +52,32 @@ fn kind_for(name: &str) -> Kind {
         "UltraShadows_Enabled" | "Shadow_ParticleShadows" | "Shadow_LongShadows"
         | "Shadow_DisableScreenSizeCheck" | "Reflection_MipBlur" | "FXAA_Enabled"
         | "TXAA_Enabled" | "Lighting_FogVolumes" | "Shader_SSA" | "DoF"
-        | "HdStreamingInFlight" | "Stereo" | "Audio3d" | "TripleBuffered"
+        | "HdStreamingInFlight" | "Audio3d" | "TripleBuffered"
         | "AsyncComputeEnabled" => Kind::Bool,
 
-        // Sparse enums
+        // Sparse enums (only values the in-game menu writes).
         "MSAA" | "ReflectionMSAA" => Kind::IntSet(&[0, 2, 4, 8]),
-        "AnisotropicFiltering" => Kind::IntSet(&[0, 1, 2, 4, 8, 16]),
+        // In-game: Off / X2 / X4 / X8 / X16 — there is no x1 step.
+        "AnisotropicFiltering" => Kind::IntSet(&[0, 2, 4, 8, 16]),
 
-        // Contiguous enums (match src/lib/gtaSettingsMap.ts)
-        "Tessellation" | "ParticleQuality" | "GrassQuality" | "PostFX" | "SamplingMode" => {
-            Kind::Int(0, 3)
+        // Contiguous enums (match src/lib/gtaSettingsMap.ts). Quality enums
+        // additionally accept -1: the game keeps below-menu values (widely
+        // shared low-end "potato" configs rely on this), so rejecting them
+        // would silently destroy an imported user file.
+        "Tessellation" | "GrassQuality" | "PostFX" | "ShadowQuality"
+        | "ReflectionQuality" => Kind::Int(-1, 3),
+        "TextureQuality" | "WaterQuality" | "ShaderQuality" | "ParticleQuality" => {
+            Kind::Int(-1, 2)
         }
-        "ShadowQuality" | "ReflectionQuality" => Kind::Int(0, 4),
-        "SSAO" | "TextureQuality" | "WaterQuality" | "ShaderQuality" | "MSAAQuality"
-        | "DX_Version" | "VSync" | "Windowed" => Kind::Int(0, 2),
+        "SSAO" | "MSAAQuality" | "DX_Version" | "VSync" | "Windowed" => Kind::Int(0, 2),
+        // Frame Scaling Mode: 0 = Off, then render-scale steps up to x2.000.
+        "SamplingMode" => Kind::Int(0, 9),
         "MSAAFragments" | "PauseOnFocusLoss" => Kind::Int(0, 1),
+        // Sharp..Softest then AMD CHS / NVIDIA PCSS.
         "Shadow_SoftShadows" => Kind::Int(0, 5),
         "AspectRatio" => Kind::Int(0, 6),
+        // The game writes Stereo as 0/1, NOT true/false.
+        "Stereo" => Kind::Int(0, 1),
 
         // Video / display
         "ScreenWidth" => Kind::Int(320, 15360),
@@ -462,6 +471,43 @@ mod tests {
     }
 
     #[test]
+    fn real_game_written_values_pass_untouched() {
+        // Values exactly as GTA V itself writes them (incl. hidden -1 grass
+        // from low-end configs) must survive a repair pass with zero changes.
+        let tpl = template();
+        let mut client = tpl.clone();
+        for i in &mut client.items {
+            let value = match rel_path("Settings", &i.path) {
+                "video/Stereo" => "0",
+                "graphics/SamplingMode" => "7",
+                "graphics/AnisotropicFiltering" => "16",
+                "graphics/GrassQuality" => "-1",
+                "graphics/Shadow_SoftShadows" => "4",
+                "graphics/ShadowQuality" => "3",
+                _ => continue,
+            };
+            i.attributes.insert("value".into(), value.into());
+        }
+
+        let outcome = repair_document(&client, &[&tpl]);
+        assert!(outcome.repairs.is_empty(), "repairs: {:?}", outcome.repairs);
+        for (rel, expected) in [
+            ("video/Stereo", "0"),
+            ("graphics/SamplingMode", "7"),
+            ("graphics/AnisotropicFiltering", "16"),
+            ("graphics/GrassQuality", "-1"),
+            ("graphics/Shadow_SoftShadows", "4"),
+            ("graphics/ShadowQuality", "3"),
+        ] {
+            assert_eq!(
+                get(&outcome.document, rel).unwrap().attributes["value"],
+                expected,
+                "{rel} must pass through unchanged"
+            );
+        }
+    }
+
+    #[test]
     fn validate_value_covers_kinds() {
         assert!(validate_value("DoF", "value", "true"));
         assert!(!validate_value("DoF", "value", "True"));
@@ -474,5 +520,20 @@ mod tests {
         assert!(!validate_value("LodScale", "value", "-1"));
         assert!(!validate_value("anything", "value", ""));
         assert!(validate_value("VideoCardDescription", "#text", "GPU"));
+        // The game writes Stereo as 0/1 — bool spellings are not real values.
+        assert!(validate_value("Stereo", "value", "0"));
+        assert!(validate_value("Stereo", "value", "1"));
+        assert!(!validate_value("Stereo", "value", "false"));
+        // No x1 anisotropic step exists in the real menu.
+        assert!(validate_value("AnisotropicFiltering", "value", "16"));
+        assert!(!validate_value("AnisotropicFiltering", "value", "1"));
+        // Hidden below-menu quality values (potato configs) must survive.
+        assert!(validate_value("GrassQuality", "value", "-1"));
+        assert!(!validate_value("GrassQuality", "value", "4"));
+        assert!(validate_value("ShadowQuality", "value", "3"));
+        assert!(!validate_value("ShadowQuality", "value", "5"));
+        // Frame Scaling Mode spans Off..x2.000.
+        assert!(validate_value("SamplingMode", "value", "8"));
+        assert!(!validate_value("SamplingMode", "value", "12"));
     }
 }

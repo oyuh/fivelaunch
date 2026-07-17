@@ -245,7 +245,94 @@ fn read_file_tail(path: &Path, max_bytes: u64) -> String {
     String::from_utf8_lossy(&buf).to_string()
 }
 
-/// GTA V install dir candidates (CitizenFX.ini hints + common locations).
+/// Steam root directories from the registry (per-user install first).
+fn steam_roots() -> Vec<PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let mut roots = Vec::new();
+    if let Ok(key) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\Valve\Steam") {
+        if let Ok(path) = key.get_value::<String, _>("SteamPath") {
+            // HKCU stores this with forward slashes.
+            roots.push(PathBuf::from(path.replace('/', "\\")));
+        }
+    }
+    if let Ok(key) =
+        RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\WOW6432Node\Valve\Steam")
+    {
+        if let Ok(path) = key.get_value::<String, _>("InstallPath") {
+            roots.push(PathBuf::from(path));
+        }
+    }
+    roots
+}
+
+/// Every `"path" "<dir>"` value in a Steam libraryfolders.vdf. The VDF quotes
+/// values and escapes backslashes (`D:\\SteamLibrary`).
+fn parse_vdf_library_paths(text: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some(rest) = line.trim().strip_prefix("\"path\"") else {
+            continue;
+        };
+        let value = rest.trim().trim_matches('"');
+        if !value.is_empty() {
+            out.push(PathBuf::from(value.replace("\\\\", "\\")));
+        }
+    }
+    out
+}
+
+/// All Steam library roots (the Steam install itself + every extra library in
+/// libraryfolders.vdf). GTA V frequently lives in a library on another drive,
+/// not under Program Files (x86)\Steam.
+fn steam_library_roots() -> Vec<PathBuf> {
+    let mut libs = IndexSet::new();
+    for root in steam_roots() {
+        let vdf = root.join("steamapps").join("libraryfolders.vdf");
+        if let Ok(text) = fs::read_to_string(&vdf) {
+            for lib in parse_vdf_library_paths(&text) {
+                libs.insert(lib);
+            }
+        }
+        libs.insert(root);
+    }
+    libs.into_iter().collect()
+}
+
+/// GTA V install dirs recorded by Rockstar's own registry keys. The launcher
+/// writes `InstallFolder`; Steam-distributed copies write `InstallFolderSteam`
+/// under the `GTAV` key (historically pointing one level above or below the
+/// real game dir, so sibling variants are returned too — callers filter on
+/// GTA5.exe anyway).
+fn rockstar_registry_candidates() -> Vec<PathBuf> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let mut out = Vec::new();
+    let keys = [
+        (r"SOFTWARE\WOW6432Node\Rockstar Games\Grand Theft Auto V", "InstallFolder"),
+        (r"SOFTWARE\Rockstar Games\Grand Theft Auto V", "InstallFolder"),
+        (r"SOFTWARE\WOW6432Node\Rockstar Games\GTAV", "InstallFolderSteam"),
+        (r"SOFTWARE\Rockstar Games\GTAV", "InstallFolderSteam"),
+    ];
+    for (subkey, name) in keys {
+        if let Ok(key) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(subkey) {
+            if let Ok(path) = key.get_value::<String, _>(name) {
+                let p = PathBuf::from(path);
+                out.push(p.join("GTAV"));
+                if let Some(parent) = p.parent() {
+                    out.push(parent.to_path_buf());
+                }
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// GTA V install dir candidates (CitizenFX.ini hints + registry + Steam
+/// libraries + common locations).
 pub fn gta_install_dir_candidates(citizen_fx_ini: Option<&Path>) -> Vec<PathBuf> {
     let mut results = IndexSet::new();
 
@@ -271,6 +358,20 @@ pub fn gta_install_dir_candidates(citizen_fx_ini: Option<&Path>) -> Vec<PathBuf>
     }
 
     let mut common: Vec<PathBuf> = Vec::new();
+
+    // Publisher registry keys are the most reliable signal when present.
+    common.extend(rockstar_registry_candidates());
+
+    // Real Steam libraries (registry + libraryfolders.vdf) — covers installs
+    // on any drive, not just the default library.
+    for lib in steam_library_roots() {
+        common.push(
+            lib.join("steamapps")
+                .join("common")
+                .join("Grand Theft Auto V"),
+        );
+    }
+
     if let Some(pf) = std::env::var_os("ProgramFiles") {
         let pf = PathBuf::from(pf);
         common.push(pf.join("Rockstar Games").join("Grand Theft Auto V"));
@@ -556,6 +657,19 @@ pub fn run_reshade_discovery(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_steam_libraryfolders_vdf_paths() {
+        let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"label\"\t\t\"\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\"\n\t\t{\n\t\t\t\"271590\"\t\t\"111083414\"\n\t\t}\n\t}\n}\n";
+        let paths = parse_vdf_library_paths(vdf);
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from(r"C:\Program Files (x86)\Steam"),
+                PathBuf::from(r"D:\SteamLibrary"),
+            ]
+        );
+    }
 
     #[test]
     fn extracts_windows_paths_from_log_text() {
