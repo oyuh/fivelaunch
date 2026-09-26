@@ -83,7 +83,7 @@ fn parse_tree(xml: &str) -> Option<(String, ParsedNode)> {
     let read_attrs = |e: &BytesStart| -> IndexMap<String, String> {
         let mut attrs = IndexMap::new();
         for attr in e.attributes().flatten() {
-            let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+            let key = attr.key.as_ref().to_string();
             let value = attr
                 .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map(|v| v.to_string())
@@ -96,7 +96,7 @@ fn parse_tree(xml: &str) -> Option<(String, ParsedNode)> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 let node = ParsedNode {
                     attrs: read_attrs(&e),
                     ..Default::default()
@@ -104,7 +104,7 @@ fn parse_tree(xml: &str) -> Option<(String, ParsedNode)> {
                 stack.push((name, node));
             }
             Ok(Event::Empty(e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 let node = ParsedNode {
                     attrs: read_attrs(&e),
                     ..Default::default()
@@ -117,9 +117,7 @@ fn parse_tree(xml: &str) -> Option<(String, ParsedNode)> {
             }
             Ok(Event::Text(t)) => {
                 if let Some(top) = stack.last_mut() {
-                    if let Ok(text) = t.xml10_content() {
-                        top.1.text.push_str(text.trim());
-                    }
+                    top.1.text.push_str(t.xml10_content().trim());
                 }
             }
             Ok(Event::End(_)) => {
