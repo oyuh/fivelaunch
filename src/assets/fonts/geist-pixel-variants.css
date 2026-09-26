@@ -1,0 +1,25 @@
+/* Style-guide-only Geist Pixel grid styles; see geist-pixel.css. */
+
+@font-face {
+  font-family: 'Geist Pixel Circle';
+  src: url('./geist-pixel/GeistPixel-Circle.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Grid';
+  src: url('./geist-pixel/GeistPixel-Grid.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Line';
+  src: url('./geist-pixel/GeistPixel-Line.woff2') format('woff2');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Pixel Triangle';
+  src: url('./geist-pixel/GeistPixel-Triangle.woff2') format('woff2');
+  font-display: swap;
+}

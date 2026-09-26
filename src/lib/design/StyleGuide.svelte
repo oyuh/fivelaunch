@@ -11,6 +11,7 @@
   import StatItem from '../components/ui/StatItem.svelte'
   import { CLIENT_ICONS, UI_ICONS } from '../components/ui/icons'
   import { tooltip } from '../actions/tooltip'
+  import '../../assets/fonts/geist-pixel-variants.css'
 
   let demoModal = $state(false)
   let demoConfirm = $state(false)

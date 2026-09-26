@@ -188,7 +188,6 @@ pub fn mirror_folder_source_wins_one_way(
     filter_rel: Option<&dyn Fn(&str) -> bool>,
     max_files: Option<usize>,
     mut cache: Option<&mut HashMap<String, f64>>,
-    mut on_progress: Option<&mut dyn FnMut(&MirrorProgress)>,
 ) -> MirrorProgress {
     ensure_dir_exists(source_dir);
     ensure_dir_exists(target_dir);
@@ -216,16 +215,8 @@ pub fn mirror_folder_source_wins_one_way(
         }
 
         p.processed += 1;
-        if p.processed % 250 == 0 {
-            if let Some(cb) = on_progress.as_deref_mut() {
-                cb(&p);
-            }
-        }
     }
 
-    if let Some(cb) = on_progress {
-        cb(&p);
-    }
     p
 }
 
@@ -237,7 +228,6 @@ pub fn mirror_folder_prefer_newest_one_way(
     filter_rel: Option<&dyn Fn(&str) -> bool>,
     max_files: Option<usize>,
     mut cache: Option<&mut HashMap<String, f64>>,
-    mut on_progress: Option<&mut dyn FnMut(&MirrorProgress)>,
 ) -> MirrorProgress {
     ensure_dir_exists(source_dir);
     ensure_dir_exists(target_dir);
@@ -283,16 +273,8 @@ pub fn mirror_folder_prefer_newest_one_way(
         }
 
         p.processed += 1;
-        if p.processed % 250 == 0 {
-            if let Some(cb) = on_progress.as_deref_mut() {
-                cb(&p);
-            }
-        }
     }
 
-    if let Some(cb) = on_progress {
-        cb(&p);
-    }
     p
 }
 
@@ -342,7 +324,7 @@ mod tests {
         fs::write(src.join("sub\\b.ini"), b"[b]").unwrap();
 
         let mut cache = HashMap::new();
-        let p = mirror_folder_source_wins_one_way(&src, &dst, None, None, Some(&mut cache), None);
+        let p = mirror_folder_source_wins_one_way(&src, &dst, None, None, Some(&mut cache));
 
         assert_eq!(p.copied, 2);
         assert_eq!(fs::read(dst.join("a.dll")).unwrap(), b"plugin a");
@@ -352,7 +334,7 @@ mod tests {
         assert!(cache.contains_key("sub\\b.ini"), "cache keys use backslash rel paths like v1");
 
         // Second run with warm cache: everything skipped.
-        let p2 = mirror_folder_source_wins_one_way(&src, &dst, None, None, Some(&mut cache), None);
+        let p2 = mirror_folder_source_wins_one_way(&src, &dst, None, None, Some(&mut cache));
         assert_eq!(p2.copied, 0);
         assert_eq!(p2.skipped, 2);
     }
@@ -370,7 +352,7 @@ mod tests {
         fs::write(dst.join("x.ini"), b"game-newer").unwrap();
         set_mtime_secs_ago(&src.join("x.ini"), 60);
 
-        let p = mirror_folder_source_wins_one_way(&src, &dst, None, None, None, None);
+        let p = mirror_folder_source_wins_one_way(&src, &dst, None, None, None);
         assert_eq!(p.copied, 1);
         assert_eq!(fs::read(dst.join("x.ini")).unwrap(), b"client");
     }
@@ -386,7 +368,7 @@ mod tests {
         fs::write(dst.join("x.ini"), b"newer client").unwrap();
         set_mtime_secs_ago(&src.join("x.ini"), 120);
 
-        let p = mirror_folder_prefer_newest_one_way(&src, &dst, None, None, None, None);
+        let p = mirror_folder_prefer_newest_one_way(&src, &dst, None, None, None);
         assert_eq!(p.copied, 0);
         assert_eq!(p.skipped, 1);
         assert_eq!(fs::read(dst.join("x.ini")).unwrap(), b"newer client");
@@ -403,7 +385,7 @@ mod tests {
         fs::write(src.join("x.ini"), b"fresh game").unwrap();
         set_mtime_secs_ago(&dst.join("x.ini"), 120);
 
-        let p = mirror_folder_prefer_newest_one_way(&src, &dst, None, None, None, None);
+        let p = mirror_folder_prefer_newest_one_way(&src, &dst, None, None, None);
         assert_eq!(p.copied, 1);
         assert_eq!(fs::read(dst.join("x.ini")).unwrap(), b"fresh game");
     }
@@ -419,7 +401,7 @@ mod tests {
 
         let filter: &dyn Fn(&str) -> bool = &is_safe_runtime_plugin_file;
         let p =
-            mirror_folder_prefer_newest_one_way(&src, &dst, Some(filter), Some(350), None, None);
+            mirror_folder_prefer_newest_one_way(&src, &dst, Some(filter), Some(350), None);
         assert_eq!(p.processed, 1);
         assert!(dst.join("keep.ini").exists());
         assert!(!dst.join("skip.dll").exists());

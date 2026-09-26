@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use super::hash::fnv1a32_hex;
 use super::mirror::{
     is_safe_runtime_plugin_file, mirror_folder_prefer_newest_one_way,
-    mirror_folder_source_wins_one_way, MirrorProgress,
+    mirror_folder_source_wins_one_way,
 };
 
 // ---------------------------------------------------------------------------
@@ -170,22 +170,12 @@ pub fn initial_sync_client_to_game(
         .entry(cache_key)
         .or_insert_with(|| load_mirror_cache(&cache_path));
 
-    let mut last_progress = Instant::now() - Duration::from_secs(10);
-    let mut on_progress = |p: &MirrorProgress| {
-        if last_progress.elapsed() >= Duration::from_millis(750) {
-            last_progress = Instant::now();
-            // Streamed to the UI via the injected status callback.
-        }
-        let _ = p;
-    };
-
     let progress = mirror_folder_source_wins_one_way(
         client_plugins_dir,
         game_plugins_dir,
         None,
         None,
         Some(cache),
-        Some(&mut on_progress),
     );
     status(&format!(
         "Syncing plugins (copy mode)... {} scanned, {} updated",
@@ -250,7 +240,6 @@ pub fn run_plugins_runtime_sync(
                 Some(filter),
                 Some(config.running_max_files),
                 None,
-                None,
             );
         } else {
             if was_running {
@@ -261,7 +250,6 @@ pub fn run_plugins_runtime_sync(
                     client_plugins_dir,
                     Some(filter),
                     Some(config.finalize_max_files),
-                    None,
                     None,
                 );
                 status(&format!(

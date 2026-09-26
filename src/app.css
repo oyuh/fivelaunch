@@ -10,23 +10,19 @@
  * Colours are HSL CSS variables so the runtime theme picker (theme.ts) can
  * rewrite --primary / --ring live; the accent gradient + glow derive from them.
  */
-@import '@fontsource/plus-jakarta-sans/400.css';
-@import '@fontsource/plus-jakarta-sans/500.css';
-@import '@fontsource/plus-jakarta-sans/600.css';
-@import '@fontsource/plus-jakarta-sans/700.css';
-@import '@fontsource/archivo/600.css';
-@import '@fontsource/archivo/700.css';
-@import '@fontsource/archivo/800.css';
-@import '@fontsource/geist-mono/400.css';
-@import '@fontsource/geist-mono/500.css';
+/* Variable fonts: one woff2 per subset covers every weight, and fontsource's
+ * static packages also bundle .woff fallbacks WebView2 never loads. */
+@import '@fontsource-variable/plus-jakarta-sans/wght.css';
+@import '@fontsource-variable/archivo/wght.css';
+@import '@fontsource-variable/geist-mono/wght.css';
 @import './assets/fonts/geist-pixel.css';
 
 @import 'tailwindcss';
 
 @theme inline {
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Archivo', 'Plus Jakarta Sans', ui-sans-serif, sans-serif;
-  --font-mono: 'Geist Pixel', 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Archivo Variable', 'Plus Jakarta Sans Variable', ui-sans-serif, sans-serif;
+  --font-mono: 'Geist Pixel', 'Geist Mono Variable', ui-monospace, SFMono-Regular, monospace;
 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
