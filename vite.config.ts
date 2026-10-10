@@ -3,8 +3,11 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { svelteTesting } from '@testing-library/svelte/vite'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
-export default defineConfig({
+// `bun run build:preview` (mode `app-preview`) builds the UI preview harness
+// (index.preview.html -> src/preview.ts) into a static bundle in preview-dist/.
+// The preview mocks the Tauri IPC bridge, so it runs in any plain browser,
+// which lets the docs site embed the real app in an <iframe>.
+export default defineConfig(({ mode }) => ({
   plugins: [svelte(), svelteTesting(), tailwindcss()],
 
   // Stop PostCSS config discovery from walking up into the v1 repo root
@@ -21,9 +24,18 @@ export default defineConfig({
 
   // The app only renders in WebView2 (evergreen Chromium) — skip syntax
   // downleveling for older browsers; smaller output, faster parse.
-  build: {
-    target: 'chrome120'
-  },
+  // The preview bundle uses relative asset URLs so it works from a sub-path
+  // (e.g. https://fivelaunch.help/app-preview/) and keeps default targets.
+  ...(mode === 'app-preview'
+    ? {
+        base: './',
+        build: {
+          outDir: 'preview-dist',
+          emptyOutDir: true,
+          rollupOptions: { input: 'index.preview.html' }
+        }
+      }
+    : { build: { target: 'chrome120' } }),
 
   // Tauri expects a fixed port; fail if unavailable instead of picking another.
   server: {
@@ -43,4 +55,4 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/tests/setup.ts']
   }
-})
+}))
